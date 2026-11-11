@@ -1,0 +1,33 @@
+{
+  "app": {
+    "version": "1.0.0",
+    "url": "app/ZirisWorkshop-1.0.0.exe",
+    "sha256": "46365fb2dd5a40d805e3cfeb5180d5d4be1a7ba9bcb3cc70224f176ee4ce8309"
+  },
+  "addons": [
+    {
+      "id": "LootHighlight",
+      "name": "Loot Highlight",
+      "description": "Points out nearby herbs, ore, chests, quest objects and lootable corpses.",
+      "version": "2.9.2",
+      "url": "addons/LootHighlight-2.9.2.zip",
+      "sha256": "b65502c3fa7ea886aec80cd73995939ebf6ccbd8d6fc8cf2818a8b0c69a17c52"
+    },
+    {
+      "id": "FriendsCraft",
+      "name": "FriendsCraft",
+      "description": "Share professions, gold, recipes, bags and a shopping list with your friends.",
+      "version": "0.2.1",
+      "url": "addons/FriendsCraft-0.2.1.zip",
+      "sha256": "2a624e698726c6a8d7010f4e4f8b7476dfe615447ce066eefd6dc5d40521a7f5"
+    },
+    {
+      "id": "FreshRanks",
+      "name": "Fresh Ranks",
+      "description": "Puts newly learned spell ranks and new spells on your action bars.",
+      "version": "1.0.0",
+      "url": "addons/FreshRanks-1.0.0.zip",
+      "sha256": "b135c1f75a8d0a5003850d9598dd09c201b3b687fba60863009c9c4ae393b8bd"
+    }
+  ]
+}
