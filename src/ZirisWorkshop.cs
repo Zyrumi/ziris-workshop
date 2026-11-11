@@ -21,6 +21,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -38,7 +39,7 @@ using Microsoft.Win32;
 [assembly: TargetFramework(".NETFramework,Version=v4.8", FrameworkDisplayName = ".NET Framework 4.8")]
 [assembly: System.Reflection.AssemblyTitle("Ziri's Workshop")]
 [assembly: System.Reflection.AssemblyProduct("Ziri's Workshop")]
-[assembly: System.Reflection.AssemblyVersion("1.0.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.1.0.0")]
 
 namespace ZirisWorkshop
 {
@@ -147,7 +148,7 @@ namespace ZirisWorkshop
     static class Util
     {
         public const string AppName = "Ziri's Workshop";
-        public const string AppVersion = "1.0.0";
+        public const string AppVersion = "1.1.0";
         public const string RawBase = "https://raw.githubusercontent.com/Zyrumi/ziris-workshop/main/";
 
         static readonly object logLock = new object();
@@ -723,28 +724,592 @@ namespace ZirisWorkshop
     }
 
     // ------------------------------------------------------------------
-    // The window
+    // The window: a little tinker's workshop
     // ------------------------------------------------------------------
 
-    class Row
+    // Colors, fonts and drawing helpers shared by the custom controls.
+    static class Theme
+    {
+        public static float K = 1f; // screen scale (1 = 96 dpi)
+
+        public static int S(float v) { return (int)Math.Round(v * K); }
+
+        public static readonly Color Paper = Color.FromArgb(247, 240, 225);
+        public static readonly Color Grid = Color.FromArgb(236, 226, 204);
+        public static readonly Color GridMajor = Color.FromArgb(226, 212, 184);
+        public static readonly Color Ink = Color.FromArgb(59, 47, 47);
+        public static readonly Color InkMid = Color.FromArgb(104, 88, 82);
+        public static readonly Color Brass = Color.FromArgb(215, 162, 62);
+        public static readonly Color BrassDark = Color.FromArgb(132, 92, 30);
+        public static readonly Color BrassLight = Color.FromArgb(246, 220, 146);
+        public static readonly Color Steel1 = Color.FromArgb(255, 253, 248);
+        public static readonly Color Steel2 = Color.FromArgb(239, 231, 215);
+        public static readonly Color Pink = Color.FromArgb(224, 108, 181);
+        public static readonly Color PinkDark = Color.FromArgb(150, 52, 118);
+        public static readonly Color PinkLight = Color.FromArgb(251, 220, 239);
+        public static readonly Color Teal = Color.FromArgb(40, 128, 117);
+        public static readonly Color TealLight = Color.FromArgb(214, 240, 233);
+        public static readonly Color Rust = Color.FromArgb(170, 64, 50);
+        public static readonly Color RustLight = Color.FromArgb(249, 219, 212);
+        public static readonly Color Waiting = Color.FromArgb(251, 237, 196);
+        public static readonly Color OffTrack = Color.FromArgb(214, 205, 192);
+        public static readonly Color OffLight = Color.FromArgb(234, 228, 218);
+        public static readonly Color Bench1 = Color.FromArgb(88, 72, 80);
+        public static readonly Color Bench2 = Color.FromArgb(56, 46, 52);
+        public static readonly Color Cream = Color.FromArgb(255, 246, 230);
+        public static readonly Color CreamDim = Color.FromArgb(214, 198, 176);
+
+        public static Font Title, CardTitle, Button, Label, Tiny, Body, Symbol;
+
+        public static void Init(float dpi)
+        {
+            K = dpi / 96f;
+            bool bahn = HasFont("Bahnschrift SemiBold") && HasFont("Bahnschrift");
+            string bold = bahn ? "Bahnschrift SemiBold" : "Segoe UI Semibold";
+            string plain = bahn ? "Bahnschrift" : "Segoe UI";
+            Title = new Font(bold, 22f);
+            CardTitle = new Font(bold, 13f);
+            Button = new Font(bold, 10f);
+            Label = new Font(plain, 9.5f);
+            Tiny = new Font(bold, 8f);
+            Body = new Font("Segoe UI", 9.75f);
+            Symbol = new Font("Segoe UI Symbol", 9f);
+        }
+
+        static bool HasFont(string name)
+        {
+            try
+            {
+                using (var fc = new System.Drawing.Text.InstalledFontCollection())
+                    return fc.Families.Any(f => f.Name == name);
+            }
+            catch { return false; }
+        }
+
+        public static GraphicsPath Round(RectangleF r, float rad)
+        {
+            var p = new GraphicsPath();
+            float d = Math.Min(rad * 2, Math.Min(r.Width, r.Height));
+            if (d <= 1) { p.AddRectangle(r); return p; }
+            p.AddArc(r.X, r.Y, d, d, 180, 90);
+            p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+            p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+            p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+            p.CloseFigure();
+            return p;
+        }
+
+        // A brass rivet with a little shine.
+        public static void Rivet(Graphics g, float cx, float cy, float r)
+        {
+            using (var b = new SolidBrush(BrassDark)) g.FillEllipse(b, cx - r, cy - r, r * 2, r * 2);
+            using (var b = new SolidBrush(Brass)) g.FillEllipse(b, cx - r * 0.78f, cy - r * 0.78f, r * 1.56f, r * 1.56f);
+            using (var b = new SolidBrush(BrassLight)) g.FillEllipse(b, cx - r * 0.5f, cy - r * 0.55f, r * 0.62f, r * 0.62f);
+        }
+
+        // A cog wheel with a hole in the middle.
+        public static void Gear(Graphics g, float cx, float cy, float r, int teeth, float angle, Color fill, Color edge, float edgeWidth)
+        {
+            var pts = new List<PointF>();
+            int steps = teeth * 4;
+            for (int i = 0; i < steps; i++)
+            {
+                float a = angle + (float)(Math.PI * 2 * i / steps);
+                float rr = (i % 4 == 0 || i % 4 == 1) ? r : r * 0.78f;
+                pts.Add(new PointF(cx + rr * (float)Math.Cos(a), cy + rr * (float)Math.Sin(a)));
+            }
+            using (var path = new GraphicsPath(FillMode.Alternate))
+            {
+                path.AddPolygon(pts.ToArray());
+                float h = r * 0.32f;
+                path.AddEllipse(cx - h, cy - h, h * 2, h * 2);
+                using (var b = new SolidBrush(fill)) g.FillPath(b, path);
+                if (edgeWidth > 0)
+                    using (var p = new Pen(edge, edgeWidth) { LineJoin = LineJoin.Round }) g.DrawPath(p, path);
+            }
+        }
+
+        // Faint blueprint grid on cream paper. offsetY keeps the grid lined up across controls.
+        public static void PaperGrid(Graphics g, Rectangle area, int offsetY)
+        {
+            using (var b = new SolidBrush(Paper)) g.FillRectangle(b, area);
+            int step = Math.Max(8, S(16));
+            using (var minor = new Pen(Grid))
+            using (var major = new Pen(GridMajor))
+            {
+                for (int x = 0, i = 0; x < area.Right; x += step, i++)
+                    g.DrawLine(i % 4 == 0 ? major : minor, x, area.Top, x, area.Bottom);
+                int first = -((offsetY % step + step) % step);
+                int idx = (offsetY + first) / step;
+                for (int y = first; y < area.Bottom; y += step, idx++)
+                    g.DrawLine(idx % 4 == 0 ? major : minor, area.Left, y, area.Right, y);
+            }
+        }
+
+        // The on/off lever: pink track when on, grey when off, always with the word ON or OFF.
+        public static void Toggle(Graphics g, RectangleF r, bool on, bool hover)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using (var path = Round(r, r.Height / 2))
+            {
+                using (var b = new SolidBrush(on ? (hover ? Color.FromArgb(234, 126, 194) : Pink) : (hover ? Color.FromArgb(224, 216, 204) : OffTrack)))
+                    g.FillPath(b, path);
+                using (var p = new Pen(on ? PinkDark : InkMid, Math.Max(1f, 1.5f * K))) g.DrawPath(p, path);
+            }
+            float pad = 3 * K;
+            float d = r.Height - pad * 2;
+            var text = on ? "ON" : "OFF";
+            var textArea = on
+                ? new Rectangle((int)(r.X + pad * 2), (int)r.Y, (int)(r.Width - d - pad * 3), (int)r.Height)
+                : new Rectangle((int)(r.X + d + pad * 2), (int)r.Y, (int)(r.Width - d - pad * 3), (int)r.Height);
+            TextRenderer.DrawText(g, text, Tiny, textArea, on ? Color.White : Ink,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+            float kx = on ? r.Right - d - pad : r.X + pad;
+            float ky = r.Y + pad;
+            using (var b = new SolidBrush(Color.FromArgb(50, 0, 0, 0))) g.FillEllipse(b, kx, ky + K, d, d);
+            using (var b = new SolidBrush(Steel1)) g.FillEllipse(b, kx, ky, d, d);
+            using (var p = new Pen(Brass, 2 * K)) g.DrawEllipse(p, kx + K, ky + K, d - 2 * K, d - 2 * K);
+            // a little rivet in the knob
+            Rivet(g, kx + d / 2, ky + d / 2, d * 0.2f);
+        }
+
+        public static void FocusRing(Graphics g, RectangleF r, float rad, Color color)
+        {
+            using (var path = Round(r, rad))
+            using (var p = new Pen(color, Math.Max(1f, 1.5f * K)) { DashStyle = DashStyle.Dash })
+                g.DrawPath(p, path);
+        }
+    }
+
+    enum StatusKind { Ok, Busy, Waiting, Off, Problem }
+
+    // Top of the window: Ziri, the title, and two gears that turn while work is going on.
+    class HeaderPlate : Control
+    {
+        readonly Image icon;
+        readonly System.Windows.Forms.Timer spin;
+        float angle;
+        int jobs;
+
+        public HeaderPlate(Image icon)
+        {
+            this.icon = icon;
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+            Height = Theme.S(134);
+            spin = new System.Windows.Forms.Timer { Interval = 33 };
+            spin.Tick += (s, e) => { angle += 0.06f; Invalidate(GearArea()); };
+        }
+
+        public void Busy(bool on)
+        {
+            jobs = Math.Max(0, jobs + (on ? 1 : -1));
+            if (jobs > 0) spin.Start();
+            else spin.Stop();
+        }
+
+        Rectangle GearArea()
+        {
+            return new Rectangle(Width - Theme.S(132), 0, Theme.S(132), Theme.S(110));
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            Theme.PaperGrid(g, ClientRectangle, 0);
+            float k = Theme.K;
+
+            // gears (big one turns one way, the small one the other)
+            float bx = Width - 60 * k, by = 56 * k;
+            Theme.Gear(g, bx - 44 * k, by - 22 * k, 17 * k, 8, -angle * 1.7f + 0.2f, Theme.PinkLight, Theme.PinkDark, 1.6f * k);
+            Theme.Gear(g, bx, by, 30 * k, 11, angle, Theme.Brass, Theme.BrassDark, 2f * k);
+            Theme.Rivet(g, bx, by, 4 * k);
+
+            if (icon != null) g.DrawImage(icon, 16 * k, 12 * k, 100 * k, 100 * k);
+            int tx = Theme.S(128);
+            var titleSize = TextRenderer.MeasureText("Ziri's Workshop", Theme.Title);
+            TextRenderer.DrawText(g, "Ziri's Workshop", Theme.Title, new Point(tx, Theme.S(22)), Theme.Ink, TextFormatFlags.NoPadding);
+            var sub = new Rectangle(tx + Theme.S(2), Theme.S(26) + titleSize.Height, Math.Max(80, Width - tx - Theme.S(140)), Theme.S(44));
+            TextRenderer.DrawText(g, "Switch on the addons you want. They stay up to date by themselves.", Theme.Body, sub, Theme.InkMid,
+                TextFormatFlags.WordBreak | TextFormatFlags.NoPadding);
+
+            // brass pipe along the bottom, bolted down
+            float py = Height - 14 * k;
+            var pipe = new RectangleF(14 * k, py - 4 * k, Width - 28 * k, 8 * k);
+            using (var path = Theme.Round(pipe, 4 * k))
+            using (var b = new LinearGradientBrush(new RectangleF(pipe.X, pipe.Y - 1, pipe.Width, pipe.Height + 2), Theme.BrassLight, Theme.BrassDark, 90f))
+            {
+                g.FillPath(b, path);
+                using (var p = new Pen(Theme.BrassDark, k)) g.DrawPath(p, path);
+            }
+            foreach (float x in new[] { pipe.X + 8 * k, pipe.X + pipe.Width / 3, pipe.X + pipe.Width * 2 / 3, pipe.Right - 8 * k })
+                Theme.Rivet(g, x, py, 6 * k);
+        }
+    }
+
+    // The list area: blueprint paper with a big faint cog in the corner.
+    class PaperFlow : FlowLayoutPanel
+    {
+        public PaperFlow()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            Theme.PaperGrid(g, ClientRectangle, Top);
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            float k = Theme.K;
+            Theme.Gear(g, Width - 40 * k, Height - 30 * k, 90 * k, 14, 0.1f, Color.FromArgb(28, Theme.Brass), Color.Empty, 0);
+            Theme.Gear(g, Width - 150 * k, Height - 6 * k, 44 * k, 9, 0.3f, Color.FromArgb(22, Theme.Pink), Color.Empty, 0);
+        }
+
+        protected override void OnScroll(ScrollEventArgs se)
+        {
+            base.OnScroll(se);
+            Invalidate();
+        }
+    }
+
+    // One addon on a riveted metal plate, with its on/off lever.
+    class AddonCard : Control
     {
         public string Id;
-        public TableLayoutPanel Panel;
-        public CheckBox Box;
-        public Label Desc;
-        public Label State;
-        public bool Silent;
+        string title = "", desc = "", status = "";
+        StatusKind kind;
+        bool on, hover, hoverToggle;
+        public event Action<AddonCard> ToggleClicked;
+
+        public AddonCard(string id)
+        {
+            Id = id;
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                | ControlStyles.ResizeRedraw | ControlStyles.SupportsTransparentBackColor | ControlStyles.Selectable, true);
+            BackColor = Color.Transparent;
+            TabStop = true;
+            AccessibleRole = AccessibleRole.CheckButton;
+        }
+
+        public bool On { get { return on; } }
+
+        public void Set(string t, string d, string s, StatusKind k, bool isOn)
+        {
+            title = t ?? ""; desc = d ?? ""; status = s ?? ""; kind = k; on = isOn;
+            AccessibleName = title;
+            AccessibleDescription = (on ? "On. " : "Off. ") + status + " " + desc;
+            int h = Measure();
+            if (Height != h) Height = h;
+            Invalidate();
+        }
+
+        int Pad { get { return Theme.S(16); } }
+        int ToggleW { get { return Theme.S(66); } }
+        int TextX { get { return Pad + Theme.S(28); } }
+        int TextW { get { return Math.Max(60, Width - TextX - ToggleW - Pad - Theme.S(14)); } }
+        int TitleH { get { return TextRenderer.MeasureText("Ag", Theme.CardTitle).Height; } }
+
+        // Measure and draw text the same way, so wrapped lines and heights always agree.
+        const TextFormatFlags Wrap = TextFormatFlags.WordBreak | TextFormatFlags.NoPadding | TextFormatFlags.TextBoxControl;
+
+        static Size MeasureWrapped(string text, Font font, int width)
+        {
+            using (var bmp = new Bitmap(1, 1))
+            using (var g = Graphics.FromImage(bmp))
+                return TextRenderer.MeasureText(g, text, font, new Size(width, int.MaxValue), Wrap);
+        }
+
+        int DescH()
+        {
+            if (desc.Length == 0) return 0;
+            return MeasureWrapped(desc, Theme.Body, TextW).Height;
+        }
+
+        int PillTextH()
+        {
+            return MeasureWrapped(status, Theme.Label, TextW - Theme.S(34)).Height;
+        }
+
+        int Measure()
+        {
+            int pill = Math.Max(Theme.S(26), PillTextH() + Theme.S(10));
+            return Pad + TitleH + Theme.S(3) + DescH() + Theme.S(10) + pill + Pad + Theme.S(4);
+        }
+
+        Rectangle ToggleRect
+        {
+            get
+            {
+                int h = Theme.S(30);
+                return new Rectangle(Width - Pad - ToggleW - Theme.S(4), Pad + (TitleH - h) / 2 + Theme.S(2), ToggleW, h);
+            }
+        }
+
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            int h = Measure();
+            if (Height != h) Height = h;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            float k = Theme.K;
+            var r = new RectangleF(2 * k, 2 * k, Width - 6 * k, Height - 8 * k);
+
+            using (var shadow = Theme.Round(new RectangleF(r.X + k, r.Y + 4 * k, r.Width, r.Height), 12 * k))
+            using (var b = new SolidBrush(Color.FromArgb(46, 110, 80, 40))) g.FillPath(b, shadow);
+            using (var path = Theme.Round(r, 12 * k))
+            {
+                using (var b = new LinearGradientBrush(r, Theme.Steel1, Theme.Steel2, 90f)) g.FillPath(b, path);
+                using (var p = new Pen(hover ? Theme.Brass : Theme.BrassDark, 2f * k)) g.DrawPath(p, path);
+            }
+            var inner = RectangleF.Inflate(r, -5 * k, -5 * k);
+            using (var path = Theme.Round(inner, 8 * k))
+            using (var p = new Pen(Color.FromArgb(70, Theme.Brass), k)) g.DrawPath(p, path);
+            float ri = 11 * k;
+            foreach (var pt in new[] { new PointF(r.X + ri, r.Y + ri), new PointF(r.Right - ri, r.Y + ri), new PointF(r.X + ri, r.Bottom - ri), new PointF(r.Right - ri, r.Bottom - ri) })
+                Theme.Rivet(g, pt.X, pt.Y, 3.6f * k);
+
+            int y = Pad;
+            int th = TitleH;
+            Theme.Gear(g, Pad + 12 * k, y + th / 2f + k, 10 * k, 8, 0.2f, on ? Theme.Pink : Theme.OffTrack, on ? Theme.PinkDark : Theme.InkMid, 1.4f * k);
+            TextRenderer.DrawText(g, title, Theme.CardTitle, new Rectangle(TextX, y, TextW, th), Theme.Ink, TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
+            y += th + Theme.S(3);
+            int dh = DescH();
+            if (dh > 0)
+                TextRenderer.DrawText(g, desc, Theme.Body, new Rectangle(TextX, y, TextW, dh), Theme.InkMid, Wrap);
+            y += dh + Theme.S(10);
+            DrawPill(g, new Rectangle(TextX - Theme.S(2), y, TextW + Theme.S(2), Math.Max(Theme.S(26), PillTextH() + Theme.S(10))));
+
+            Theme.Toggle(g, ToggleRect, on, hoverToggle);
+            if (Focused && ShowFocusCues)
+                Theme.FocusRing(g, RectangleF.Inflate(r, -3 * k, -3 * k), 10 * k, Theme.PinkDark);
+        }
+
+        void DrawPill(Graphics g, Rectangle area)
+        {
+            Color bg, edge;
+            string glyph;
+            switch (kind)
+            {
+                case StatusKind.Ok: bg = Theme.TealLight; edge = Theme.Teal; glyph = "✓"; break;
+                case StatusKind.Busy: bg = Theme.PinkLight; edge = Theme.PinkDark; glyph = "⚙"; break;
+                case StatusKind.Waiting: bg = Theme.Waiting; edge = Theme.BrassDark; glyph = "↻"; break;
+                case StatusKind.Problem: bg = Theme.RustLight; edge = Theme.Rust; glyph = "!"; break;
+                default: bg = Theme.OffLight; edge = Theme.InkMid; glyph = "○"; break;
+            }
+            int textH = PillTextH();
+            int textW = MeasureWrapped(status, Theme.Label, TextW - Theme.S(34)).Width;
+            var pill = new RectangleF(area.X, area.Y, Math.Min(area.Width, textW + Theme.S(36)), area.Height);
+            using (var path = Theme.Round(pill, Math.Min(pill.Height / 2, 13 * Theme.K)))
+            {
+                using (var b = new SolidBrush(bg)) g.FillPath(b, path);
+                using (var p = new Pen(edge, 1.2f * Theme.K)) g.DrawPath(p, path);
+            }
+            var gl = new Rectangle((int)pill.X + Theme.S(6), (int)pill.Y, Theme.S(20), (int)pill.Height);
+            TextRenderer.DrawText(g, glyph, kind == StatusKind.Problem ? Theme.Tiny : Theme.Symbol, gl, edge,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+            var tr = new Rectangle((int)pill.X + Theme.S(28), (int)pill.Y + ((int)pill.Height - textH) / 2, (int)pill.Width - Theme.S(34), textH);
+            TextRenderer.DrawText(g, status, Theme.Label, tr, Theme.Ink, Wrap);
+        }
+
+        void Raise()
+        {
+            var h = ToggleClicked;
+            if (h != null) h(this);
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            bool over = ToggleRect.Contains(e.Location);
+            if (over != hoverToggle)
+            {
+                hoverToggle = over;
+                Cursor = over ? Cursors.Hand : Cursors.Default;
+                Invalidate();
+            }
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { base.OnMouseEnter(e); hover = true; Invalidate(); }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            base.OnMouseLeave(e);
+            hover = false; hoverToggle = false; Cursor = Cursors.Default;
+            Invalidate();
+        }
+
+        protected override void OnMouseClick(MouseEventArgs e)
+        {
+            base.OnMouseClick(e);
+            Focus();
+            if (e.Button == MouseButtons.Left && ToggleRect.Contains(e.Location)) Raise();
+        }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            base.OnKeyDown(e);
+            if (e.KeyCode == Keys.Space || e.KeyCode == Keys.Enter) { e.Handled = true; Raise(); }
+        }
+
+        protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Invalidate(); }
+        protected override void OnLostFocus(EventArgs e) { base.OnLostFocus(e); Invalidate(); }
+
+        protected override AccessibleObject CreateAccessibilityInstance() { return new CardAccessible(this); }
+
+        class CardAccessible : ControlAccessibleObject
+        {
+            readonly AddonCard card;
+            public CardAccessible(AddonCard c) : base(c) { card = c; }
+            public override AccessibleStates State { get { return base.State | (card.on ? AccessibleStates.Checked : AccessibleStates.None); } }
+            public override string DefaultAction { get { return card.on ? "Switch off" : "Switch on"; } }
+            public override void DoDefaultAction() { card.Raise(); }
+        }
+    }
+
+    // A small lever with a label, for the workbench ("Start with Windows").
+    class LeverSwitch : Control
+    {
+        bool on, hover;
+        public event EventHandler CheckedChanged;
+
+        public LeverSwitch(string text)
+        {
+            Text = text;
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                | ControlStyles.ResizeRedraw | ControlStyles.SupportsTransparentBackColor | ControlStyles.Selectable, true);
+            BackColor = Color.Transparent;
+            ForeColor = Theme.Cream;
+            TabStop = true;
+            AccessibleRole = AccessibleRole.CheckButton;
+            AccessibleName = text;
+            Cursor = Cursors.Hand;
+            var sz = TextRenderer.MeasureText(text, Theme.Body);
+            Size = new Size(Theme.S(58) + sz.Width + Theme.S(10), Math.Max(Theme.S(30), sz.Height + Theme.S(6)));
+        }
+
+        public bool Checked
+        {
+            get { return on; }
+            set
+            {
+                if (on == value) return;
+                on = value;
+                Invalidate();
+                var h = CheckedChanged;
+                if (h != null) h(this, EventArgs.Empty);
+            }
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            var tr = new RectangleF(Theme.S(2), (Height - Theme.S(24)) / 2f, Theme.S(50), Theme.S(24));
+            Theme.Toggle(g, tr, on, hover);
+            TextRenderer.DrawText(g, Text, Theme.Body, new Rectangle(Theme.S(60), 0, Width - Theme.S(60), Height), ForeColor,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
+            if (Focused && ShowFocusCues) Theme.FocusRing(g, new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f), 6 * Theme.K, Theme.BrassLight);
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { base.OnMouseEnter(e); hover = true; Invalidate(); }
+        protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); hover = false; Invalidate(); }
+        protected override void OnMouseClick(MouseEventArgs e) { base.OnMouseClick(e); Focus(); if (e.Button == MouseButtons.Left) Checked = !Checked; }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            base.OnKeyDown(e);
+            if (e.KeyCode == Keys.Space) { e.Handled = true; Checked = !Checked; }
+        }
+
+        protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Invalidate(); }
+        protected override void OnLostFocus(EventArgs e) { base.OnLostFocus(e); Invalidate(); }
+    }
+
+    // A rounded brass button with dark ink text.
+    class BrassButton : Button
+    {
+        bool hover, down;
+
+        public BrassButton(string text)
+        {
+            Text = text;
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                | ControlStyles.SupportsTransparentBackColor, true);
+            BackColor = Color.Transparent;
+            Font = Theme.Button;
+            Cursor = Cursors.Hand;
+            var sz = TextRenderer.MeasureText(text, Theme.Button);
+            Size = new Size(sz.Width + Theme.S(38), Math.Max(Theme.S(34), sz.Height + Theme.S(14)));
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            if (Parent != null) InvokePaintBackground(this, e);
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            float k = Theme.K;
+            float off = down ? k : 0;
+            var r = new RectangleF(k, k + off, Width - 3 * k, Height - 4 * k);
+            using (var shadow = Theme.Round(new RectangleF(r.X, r.Y + 2 * k - off, r.Width, r.Height), 9 * k))
+            using (var b = new SolidBrush(Color.FromArgb(90, 0, 0, 0))) g.FillPath(b, shadow);
+            using (var path = Theme.Round(r, 9 * k))
+            {
+                Color top = hover ? Color.FromArgb(252, 232, 170) : Theme.BrassLight;
+                Color bottom = down ? Theme.BrassDark : Theme.Brass;
+                using (var b = new LinearGradientBrush(r, top, bottom, 90f)) g.FillPath(b, path);
+                using (var p = new Pen(Theme.BrassDark, 1.5f * k)) g.DrawPath(p, path);
+            }
+            Theme.Rivet(g, r.X + 8 * k, r.Y + r.Height / 2, 2.6f * k);
+            Theme.Rivet(g, r.Right - 8 * k, r.Y + r.Height / 2, 2.6f * k);
+            TextRenderer.DrawText(g, Text, Font, Rectangle.Round(r), Theme.Ink,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+            if (Focused && ShowFocusCues) Theme.FocusRing(g, RectangleF.Inflate(r, -3 * k, -3 * k), 7 * k, Theme.Ink);
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { base.OnMouseEnter(e); hover = true; Invalidate(); }
+        protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); hover = false; down = false; Invalidate(); }
+        protected override void OnMouseDown(MouseEventArgs e) { base.OnMouseDown(e); down = true; Invalidate(); }
+        protected override void OnMouseUp(MouseEventArgs e) { base.OnMouseUp(e); down = false; Invalidate(); }
+    }
+
+    // The workbench along the bottom: dark wood-and-iron strip with a brass edge.
+    class Bench : TableLayoutPanel
+    {
+        public Bench()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.UserPaint, true);
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            float k = Theme.K;
+            using (var b = new LinearGradientBrush(ClientRectangle, Theme.Bench1, Theme.Bench2, 90f)) g.FillRectangle(b, ClientRectangle);
+            // planks
+            using (var p = new Pen(Color.FromArgb(40, 0, 0, 0), k))
+                for (float y = 34 * k; y < Height; y += 34 * k) g.DrawLine(p, 0, y, Width, y);
+            using (var b = new LinearGradientBrush(new Rectangle(0, 0, Width, Theme.S(6)), Theme.BrassLight, Theme.BrassDark, 90f))
+                g.FillRectangle(b, 0, 0, Width, Theme.S(6));
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            Theme.Rivet(g, 12 * k, 3 * k, 4 * k);
+            Theme.Rivet(g, Width - 12 * k, 3 * k, 4 * k);
+        }
     }
 
     class MainForm : Form
     {
         readonly Workshop ws;
         readonly NotifyIcon tray;
-        readonly FlowLayoutPanel list;
+        readonly HeaderPlate header;
+        readonly PaperFlow list;
         readonly Label pathLabel;
         readonly Label statusLabel;
-        readonly CheckBox startBox;
-        readonly Dictionary<string, Row> rows = new Dictionary<string, Row>();
+        readonly LeverSwitch startSwitch;
+        readonly Dictionary<string, AddonCard> cards = new Dictionary<string, AddonCard>();
         readonly System.Windows.Forms.Timer every3h;
         readonly System.Windows.Forms.Timer firstCheck;
         bool allowClose;
@@ -752,89 +1317,74 @@ namespace ZirisWorkshop
         string pendingCheck;
         bool snapshotTaken;
 
-        static readonly Color Ink = Color.FromArgb(30, 28, 44);
-        static readonly Color Dim = Color.FromArgb(90, 88, 104);
-        static readonly Color Card = Color.White;
-        static readonly Color Back = Color.FromArgb(242, 240, 248);
-
         public MainForm(Workshop workshop)
         {
             ws = workshop;
             SuspendLayout();
-            AutoScaleDimensions = new SizeF(96F, 96F);
-            AutoScaleMode = AutoScaleMode.Dpi;
+            AutoScaleMode = AutoScaleMode.None;
             Text = Util.AppName;
-            Font = new Font("Segoe UI", 9.75f);
-            BackColor = Back;
-            ForeColor = Ink;
-            ClientSize = new Size(560, 520);
-            MinimumSize = new Size(460, 420);
+            Font = Theme.Body;
+            BackColor = Theme.Paper;
+            ForeColor = Theme.Ink;
+            // tall enough for three plates, but never taller than the screen
+            var work = Screen.PrimaryScreen.WorkingArea;
+            ClientSize = new Size(Math.Min(Theme.S(600), work.Width - 40), Math.Min(Theme.S(760), work.Height - 60));
+            MinimumSize = new Size(Theme.S(500), Theme.S(500));
             StartPosition = FormStartPosition.CenterScreen;
             Icon = LoadIcon(32);
+            DoubleBuffered = true;
 
-            // header
-            var header = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, Padding = new Padding(16, 14, 16, 8) };
-            header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            var pic = new PictureBox { Size = new Size(64, 64), SizeMode = PictureBoxSizeMode.Zoom, Margin = new Padding(0, 0, 12, 0) };
-            var big = LoadIcon(64);
-            if (big != null) pic.Image = big.ToBitmap();
-            header.Controls.Add(pic, 0, 0);
-            header.SetRowSpan(pic, 2);
-            var title = new Label { Text = Util.AppName, AutoSize = true, Font = new Font("Segoe UI Semibold", 16f), Margin = new Padding(0, 6, 0, 0) };
-            header.Controls.Add(title, 1, 0);
-            var sub = new Label { Text = "Tick the addons you want. They stay up to date by themselves.", AutoSize = true, ForeColor = Dim, Margin = new Padding(2, 2, 0, 0) };
-            header.Controls.Add(sub, 1, 1);
+            var big = LoadIcon(256);
+            header = new HeaderPlate(big == null ? null : big.ToBitmap()) { Dock = DockStyle.Top };
 
-            // addon list
-            list = new FlowLayoutPanel
+            list = new PaperFlow
             {
                 Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false,
-                AutoScroll = true, Padding = new Padding(12, 4, 12, 4)
+                AutoScroll = true, Padding = new Padding(Theme.S(14), Theme.S(6), Theme.S(14), Theme.S(10))
             };
-            list.Resize += (s, e) => FitRows();
+            list.Resize += (s, e) => FitCards();
 
-            // bottom bar
-            var bottom = new TableLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, ColumnCount = 3, Padding = new Padding(16, 8, 16, 12), BackColor = Color.FromArgb(230, 227, 240) };
-            bottom.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            bottom.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            var bench = new Bench { Dock = DockStyle.Bottom, AutoSize = true, ColumnCount = 3, Padding = new Padding(Theme.S(16), Theme.S(16), Theme.S(16), Theme.S(10)) };
+            bench.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            bench.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            bench.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
-            bottom.Controls.Add(new Label { Text = "WoW folder:", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 6, 6) }, 0, 0);
-            pathLabel = new Label { AutoSize = false, AutoEllipsis = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Dim };
-            bottom.Controls.Add(pathLabel, 1, 0);
-            var change = new Button { Text = "Change...", AutoSize = true, Anchor = AnchorStyles.Right };
+            bench.Controls.Add(new Label { Text = "WoW folder", AutoSize = true, Font = Theme.Tiny, ForeColor = Theme.CreamDim, BackColor = Color.Transparent, Anchor = AnchorStyles.Left, Margin = new Padding(0, Theme.S(10), Theme.S(8), 0) }, 0, 0);
+            pathLabel = new Label { AutoSize = false, AutoEllipsis = true, Anchor = AnchorStyles.Left | AnchorStyles.Right, Height = TextRenderer.MeasureText("Ag", Theme.Body).Height + Theme.S(2), TextAlign = ContentAlignment.MiddleLeft, ForeColor = Theme.Cream, BackColor = Color.Transparent };
+            bench.Controls.Add(pathLabel, 1, 0);
+            var change = new BrassButton("Change...") { Anchor = AnchorStyles.Right, Margin = new Padding(Theme.S(6), 0, 0, Theme.S(4)) };
             change.Click += (s, e) => PickFolder();
-            bottom.Controls.Add(change, 2, 0);
+            bench.Controls.Add(change, 2, 0);
 
-            startBox = new CheckBox { Text = "Start with Windows (recommended, so updates arrive by themselves)", AutoSize = true, Checked = ws.Settings.StartWithWindows, Margin = new Padding(0, 6, 0, 6) };
-            startBox.CheckedChanged += (s, e) =>
+            startSwitch = new LeverSwitch("Start with Windows (recommended, so updates arrive by themselves)") { Margin = new Padding(0, Theme.S(4), 0, Theme.S(4)) };
+            startSwitch.Checked = ws.Settings.StartWithWindows;
+            startSwitch.CheckedChanged += (s, e) =>
             {
-                ws.Settings.StartWithWindows = startBox.Checked;
+                ws.Settings.StartWithWindows = startSwitch.Checked;
                 ws.SaveSettings();
                 ws.ApplyStartWithWindows();
             };
-            bottom.Controls.Add(startBox, 0, 1);
-            bottom.SetColumnSpan(startBox, 3);
+            bench.Controls.Add(startSwitch, 0, 1);
+            bench.SetColumnSpan(startSwitch, 3);
 
-            statusLabel = new Label { AutoSize = false, AutoEllipsis = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft };
-            bottom.Controls.Add(statusLabel, 0, 2);
-            bottom.SetColumnSpan(statusLabel, 2);
-            var buttons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Anchor = AnchorStyles.Right, Margin = new Padding(0) };
-            var checkBtn = new Button { Text = "Check now", AutoSize = true };
+            statusLabel = new Label { AutoSize = false, AutoEllipsis = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Theme.Cream, BackColor = Color.Transparent };
+            bench.Controls.Add(statusLabel, 0, 2);
+            bench.SetColumnSpan(statusLabel, 2);
+            var buttons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Anchor = AnchorStyles.Right, Margin = new Padding(0, Theme.S(4), 0, 0), BackColor = Color.Transparent };
+            var checkBtn = new BrassButton("Check now") { Margin = new Padding(Theme.S(6), 0, 0, 0) };
             checkBtn.Click += (s, e) => RunCheck("button");
-            var hideBtn = new Button { Text = "Hide", AutoSize = true };
+            var hideBtn = new BrassButton("Hide") { Margin = new Padding(Theme.S(8), 0, 0, 0) };
             hideBtn.Click += (s, e) => HideToTray();
             buttons.Controls.Add(checkBtn);
             buttons.Controls.Add(hideBtn);
-            bottom.Controls.Add(buttons, 2, 2);
+            bench.Controls.Add(buttons, 2, 2);
 
-            var version = new Label { Text = "Version " + Util.AppVersion, AutoSize = true, ForeColor = Dim, Font = new Font("Segoe UI", 8f), Margin = new Padding(0, 2, 0, 0) };
-            bottom.Controls.Add(version, 0, 3);
-            bottom.SetColumnSpan(version, 3);
+            var version = new Label { Text = "Version " + Util.AppVersion, AutoSize = true, Font = Theme.Tiny, ForeColor = Theme.CreamDim, BackColor = Color.Transparent, Margin = new Padding(0, Theme.S(6), 0, 0) };
+            bench.Controls.Add(version, 0, 3);
+            bench.SetColumnSpan(version, 3);
 
             Controls.Add(list);
-            Controls.Add(bottom);
+            Controls.Add(bench);
             Controls.Add(header);
 
             // tray
@@ -897,10 +1447,12 @@ namespace ZirisWorkshop
 
         void RunWorker(Action work)
         {
+            header.Busy(true);
             var t = new Thread(() =>
             {
                 try { work(); }
                 catch (Exception e) { Util.Log("worker: " + e); }
+                finally { Ui(() => header.Busy(false)); }
             });
             t.IsBackground = true;
             t.SetApartmentState(ApartmentState.STA);
@@ -937,108 +1489,87 @@ namespace ZirisWorkshop
             var m = ws.Manifest;
             if (m == null || m.addons == null)
             {
-                if (rows.Count == 0 && list.Controls.Count == 0)
-                    list.Controls.Add(new Label { Text = "Getting the list of addons...", AutoSize = true, ForeColor = Dim, Margin = new Padding(6, 10, 0, 0) });
+                if (cards.Count == 0 && list.Controls.Count == 0)
+                    list.Controls.Add(new Label { Text = "Getting the list of addons...", AutoSize = true, ForeColor = Theme.InkMid, BackColor = Color.Transparent, Margin = new Padding(Theme.S(6), Theme.S(12), 0, 0) });
                 return;
             }
             var ids = m.addons.Select(a => a.id).ToList();
-            if (!ids.SequenceEqual(rows.Keys))
+            if (!ids.SequenceEqual(cards.Keys))
             {
                 list.SuspendLayout();
                 list.Controls.Clear();
-                rows.Clear();
-                foreach (var a in m.addons) rows[a.id] = MakeRow(a);
-                foreach (var r in rows.Values) list.Controls.Add(r.Panel);
+                cards.Clear();
+                foreach (var a in m.addons)
+                {
+                    var c = new AddonCard(a.id) { Margin = new Padding(0, Theme.S(6), 0, Theme.S(4)) };
+                    c.ToggleClicked += OnToggle;
+                    cards[a.id] = c;
+                    list.Controls.Add(c);
+                }
                 list.ResumeLayout();
-                FitRows();
+                FitCards();
             }
-            foreach (var a in m.addons) UpdateRow(rows[a.id], a);
+            foreach (var a in m.addons) UpdateCard(cards[a.id], a);
         }
 
-        Row MakeRow(AddonInfo a)
+        void FitCards()
         {
-            var r = new Row { Id = a.id };
-            r.Panel = new TableLayoutPanel { ColumnCount = 1, AutoSize = true, BackColor = Card, Padding = new Padding(10, 8, 10, 8), Margin = new Padding(4, 4, 4, 4) };
-            r.Box = new CheckBox { Text = a.name ?? a.id, AutoSize = true, Font = new Font("Segoe UI Semibold", 10.5f) };
-            r.Box.CheckedChanged += (s, e) => OnToggle(r);
-            r.Desc = new Label { Text = a.description ?? "", AutoSize = true, ForeColor = Dim, Margin = new Padding(20, 0, 0, 2) };
-            r.State = new Label { AutoSize = true, Margin = new Padding(20, 2, 0, 0) };
-            r.Panel.Controls.Add(r.Box);
-            r.Panel.Controls.Add(r.Desc);
-            r.Panel.Controls.Add(r.State);
-            return r;
-        }
-
-        void FitRows()
-        {
-            int w = list.ClientSize.Width - list.Padding.Horizontal - 10;
+            int w = list.ClientSize.Width - list.Padding.Horizontal - Theme.S(4);
             if (w < 200) return;
-            foreach (var r in rows.Values)
-            {
-                r.Panel.MinimumSize = new Size(w, 0);
-                r.Panel.MaximumSize = new Size(w, 0);
-                r.Desc.MaximumSize = new Size(w - 50, 0);
-                r.State.MaximumSize = new Size(w - 50, 0);
-            }
+            foreach (var c in cards.Values)
+                if (c.Width != w) c.Width = w;
         }
 
-        void UpdateRow(Row r, AddonInfo a)
+        void UpdateCard(AddonCard c, AddonInfo a)
         {
             bool wanted = ws.IsWanted(a.id);
-            if (r.Box.Checked != wanted)
-            {
-                r.Silent = true;
-                r.Box.Checked = wanted;
-                r.Silent = false;
-            }
             string have = ws.InstalledVersion(a.id);
             string note;
             string text;
-            if (ws.Notes.TryGetValue(a.id, out note) && note != null) text = note;
+            StatusKind kind;
+            if (ws.Notes.TryGetValue(a.id, out note) && note != null)
+            {
+                text = note;
+                kind = note.StartsWith("Couldn't") ? StatusKind.Problem : StatusKind.Busy;
+            }
             else if (wanted)
             {
-                if (have == null) text = "Not installed yet.";
-                else if (Util.Newer(a.version, have)) text = "Version " + have + ". Update to " + a.version + " waiting.";
-                else text = "Version " + have + ", up to date.";
+                if (have == null) { text = "Not installed yet."; kind = StatusKind.Waiting; }
+                else if (Util.Newer(a.version, have)) { text = "Version " + have + ". Update to " + a.version + " waiting."; kind = StatusKind.Waiting; }
+                else { text = "Version " + have + ", up to date."; kind = StatusKind.Ok; }
             }
             else
             {
+                kind = StatusKind.Off;
                 text = have == null
-                    ? "Not installed. Tick the box to add it."
-                    : "Version " + have + " is installed but not ticked, so it isn't kept up to date.";
+                    ? "Not installed. Switch it on to add it."
+                    : "Version " + have + " is installed but switched off, so it isn't kept up to date.";
             }
-            r.State.Text = text;
+            c.Set(a.name ?? a.id, a.description, text, kind, wanted);
         }
 
-        void OnToggle(Row r)
+        void OnToggle(AddonCard c)
         {
-            if (r.Silent) return;
-            var a = ws.Find(r.Id);
-            string name = a != null && a.name != null ? a.name : r.Id;
-            if (r.Box.Checked)
+            var a = ws.Find(c.Id);
+            string name = a != null && a.name != null ? a.name : c.Id;
+            if (!c.On)
             {
-                ws.Settings.Wanted[r.Id] = true;
+                ws.Settings.Wanted[c.Id] = true;
                 ws.SaveSettings();
-                RunWorker(() => ws.InstallOne(r.Id));
+                RunWorker(() => ws.InstallOne(c.Id));
             }
             else
             {
-                if (ws.InstalledVersion(r.Id) != null)
+                if (ws.InstalledVersion(c.Id) != null)
                 {
                     var answer = MessageBox.Show(this,
-                        "Remove " + name + " from WoW?\n\nIts folder goes to the Recycle Bin. Tick it again any time to get it back.",
+                        "Switch off " + name + "?\n\nIts folder goes to the Recycle Bin. Switch it on again any time to get it back.",
                         Util.AppName, MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
-                    if (answer != DialogResult.Yes)
-                    {
-                        r.Silent = true;
-                        r.Box.Checked = true;
-                        r.Silent = false;
-                        return;
-                    }
+                    if (answer != DialogResult.Yes) return;
                 }
-                ws.Settings.Wanted[r.Id] = false;
+                ws.Settings.Wanted[c.Id] = false;
                 ws.SaveSettings();
-                RunWorker(() => ws.RemoveOne(r.Id));
+                RunWorker(() => ws.RemoveOne(c.Id));
             }
             RefreshAll();
         }
@@ -1106,19 +1637,23 @@ namespace ZirisWorkshop
             Application.Exit();
         }
 
+        // Test helper: a screen picture of the window, then quit.
         void TakeSnapshotIfAsked()
         {
             if (Opts.Snapshot == null || snapshotTaken) return;
             snapshotTaken = true;
-            var t = new System.Windows.Forms.Timer { Interval = 600 };
+            TopMost = true;
+            Activate();
+            var t = new System.Windows.Forms.Timer { Interval = 900 };
             t.Tick += (s, e) =>
             {
                 t.Stop();
                 try
                 {
-                    using (var bmp = new Bitmap(Width, Height))
+                    var b = Bounds;
+                    using (var bmp = new Bitmap(b.Width, b.Height))
                     {
-                        DrawToBitmap(bmp, new Rectangle(0, 0, Width, Height));
+                        using (var g = Graphics.FromImage(bmp)) g.CopyFromScreen(b.Location, Point.Empty, b.Size);
                         bmp.Save(Opts.Snapshot, System.Drawing.Imaging.ImageFormat.Png);
                     }
                 }
@@ -1178,6 +1713,7 @@ namespace ZirisWorkshop
                 }
 
                 try { SetProcessDPIAware(); } catch { }
+                using (var screen = Graphics.FromHwnd(IntPtr.Zero)) Theme.Init(screen.DpiX);
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
 
