@@ -151,7 +151,7 @@ namespace ZirisWorkshop
     static class Util
     {
         public const string AppName = "Ziri's Workshop";
-        public const string AppVersion = "1.1.3";
+        public const string AppVersion = "1.1.4";
         public const string RawBase = "https://raw.githubusercontent.com/Zyrumi/ziris-workshop/main/";
 
         static readonly object logLock = new object();
@@ -1075,11 +1075,11 @@ namespace ZirisWorkshop
         }
     }
 
-    // One addon as a compact riveted plate: letter badge, name, status, description and the lever.
+    // One addon as a compact riveted plate: name, status, description and the lever.
     class AddonCard : Control
     {
         public string Id;
-        string title = "", desc = "", status = "", fullStatus = "", initials = "";
+        string title = "", desc = "", status = "", fullStatus = "";
         StatusKind kind;
         bool on, hover, hoverToggle;
         public event Action<AddonCard> ToggleClicked;
@@ -1101,7 +1101,6 @@ namespace ZirisWorkshop
         public void Set(string t, string d, string shortStatus, string longStatus, StatusKind k, bool isOn)
         {
             title = t ?? ""; desc = d ?? ""; status = shortStatus ?? ""; fullStatus = longStatus ?? ""; kind = k; on = isOn;
-            initials = Initials(title);
             AccessibleName = title;
             AccessibleDescription = (on ? "On. " : "Off. ") + fullStatus + " " + desc;
             int h = Measure();
@@ -1109,22 +1108,11 @@ namespace ZirisWorkshop
             Invalidate();
         }
 
-        // "Loot Highlight" -> LH, "FriendsCraft" -> FC
-        static string Initials(string t)
-        {
-            var caps = new string(t.Where(char.IsUpper).Take(2).ToArray());
-            if (caps.Length == 2) return caps;
-            var words = t.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            if (words.Length >= 2) return (words[0].Substring(0, 1) + words[1].Substring(0, 1)).ToUpperInvariant();
-            return t.Length >= 2 ? t.Substring(0, 2).ToUpperInvariant() : t.ToUpperInvariant();
-        }
-
         int Pad { get { return Theme.S(11); } }
         int Side { get { return Theme.S(14); } }
-        int Badge { get { return Theme.S(38); } }
         int Shadow { get { return Theme.S(5); } }
         int ToggleW { get { return Theme.S(66); } }
-        int TextX { get { return Side + Badge + Theme.S(12); } }
+        int TextX { get { return Side + Theme.S(4); } }
         int TextW { get { return Math.Max(60, Width - TextX - ToggleW - Side - Theme.S(14)); } }
         int RowH { get { return Math.Max(TextRenderer.MeasureText("Ag", Theme.CardTitle).Height, Theme.S(22)); } }
 
@@ -1141,7 +1129,7 @@ namespace ZirisWorkshop
 
         int DescH() { return desc.Length == 0 ? 0 : MeasureWith(desc, Theme.Body, TextW, Wrap).Height; }
         int ContentH() { return RowH + (desc.Length == 0 ? 0 : Theme.S(2) + DescH()); }
-        int Measure() { return Math.Max(Badge, ContentH()) + 2 * Pad + Shadow; }
+        int Measure() { return Math.Max(Theme.S(30), ContentH()) + 2 * Pad + Shadow; }
 
         Rectangle ToggleRect
         {
@@ -1178,14 +1166,7 @@ namespace ZirisWorkshop
             foreach (var pt in new[] { new PointF(r.X + ri, r.Y + ri), new PointF(r.Right - ri, r.Y + ri), new PointF(r.X + ri, r.Bottom - ri), new PointF(r.Right - ri, r.Bottom - ri) })
                 Theme.Rivet(g, pt.X, pt.Y, 2.6f * k);
 
-            // letter badge: a brass-rimmed disc, deep pink when on, pale grey when off
             float mid = r.Y + r.Height / 2;
-            var badge = new RectangleF(Side, mid - Badge / 2f, Badge, Badge);
-            using (var b = new SolidBrush(on ? Theme.PinkDark : Theme.OffLight)) g.FillEllipse(b, badge);
-            using (var p = new Pen(Theme.Brass, 2.4f * k)) g.DrawEllipse(p, RectangleF.Inflate(badge, -1.2f * k, -1.2f * k));
-            using (var p = new Pen(Theme.BrassDark, 1f * k)) g.DrawEllipse(p, badge);
-            TextRenderer.DrawText(g, initials, Theme.Button, Rectangle.Round(badge), on ? Color.White : Theme.Ink,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
 
             // name, then the status pill on the same line, then the description
             int y = (int)(mid - ContentH() / 2f);
