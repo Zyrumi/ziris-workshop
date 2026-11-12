@@ -8,6 +8,12 @@ a pink-pigtailed gnome tinkerer:
 Run: python tools/make_icon.py [bomb|ziri]
 Writes assets/icon-option-<style>.png previews for both styles, and
 assets/icon.ico + assets/icon-sizes.png for the chosen one (default ziri).
+
+Or use a hand-drawn picture (PNG with a transparent background):
+    python tools/make_icon.py --from my-drawing.png
+It is copied to assets/icon-source.png, trimmed, centred on a square and
+turned into assets/icon.ico. Running with no arguments again later keeps
+using assets/icon-source.png when it exists.
 """
 import math
 import os
@@ -227,19 +233,49 @@ def sizes_sheet(sq):
     return sheet
 
 
+ICO_SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256]
+
+
+def write_ico(sq):
+    frames = [sq.resize((n, n), Image.LANCZOS) for n in ICO_SIZES]
+    frames[-1].save(os.path.join(OUT, "icon.ico"), format="ICO", sizes=[(n, n) for n in ICO_SIZES],
+                    append_images=frames[:-1])
+
+
+def from_picture(path):
+    pic = Image.open(path).convert("RGBA")
+    if pic.getchannel("A").getextrema()[0] == 255:
+        sys.exit(path + " has no transparent background; please export it as a PNG with transparency")
+    src = os.path.join(OUT, "icon-source.png")
+    if os.path.abspath(path) != os.path.abspath(src):
+        pic.save(src)
+    box = pic.getchannel("A").getbbox()
+    art = pic.crop(box)
+    side = int(max(art.width, art.height) * 1.04)
+    sq = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+    sq.paste(art, ((side - art.width) // 2, (side - art.height) // 2), art)
+    if side < 256:
+        sq = sq.resize((256, 256), Image.LANCZOS)
+    sq.resize((256, 256), Image.LANCZOS).save(os.path.join(OUT, "icon-option-handmade.png"))
+    sizes_sheet(sq).save(os.path.join(OUT, "icon-sizes-handmade.png"))
+    write_ico(sq)
+    print("icon.ico uses the picture:", path)
+
+
 def main():
-    chosen = sys.argv[1] if len(sys.argv) > 1 else "ziri"
     os.makedirs(OUT, exist_ok=True)
+    if len(sys.argv) > 2 and sys.argv[1] == "--from":
+        return from_picture(sys.argv[2])
+    if len(sys.argv) == 1 and os.path.exists(os.path.join(OUT, "icon-source.png")):
+        return from_picture(os.path.join(OUT, "icon-source.png"))
+    chosen = sys.argv[1] if len(sys.argv) > 1 else "ziri"
     styles = {"bomb": draw_bomb, "ziri": draw_ziri}
     for name, fn in styles.items():
         sq = squared(fn())
         sq.resize((256, 256), Image.LANCZOS).save(os.path.join(OUT, "icon-option-" + name + ".png"))
         sizes_sheet(sq).save(os.path.join(OUT, "icon-sizes-" + name + ".png"))
         if name == chosen:
-            sizes = [16, 20, 24, 32, 40, 48, 64, 128, 256]
-            frames = [sq.resize((n, n), Image.LANCZOS) for n in sizes]
-            frames[-1].save(os.path.join(OUT, "icon.ico"), format="ICO", sizes=[(n, n) for n in sizes],
-                            append_images=frames[:-1])
+            write_ico(sq)
     print("icon.ico uses style:", chosen)
 
 

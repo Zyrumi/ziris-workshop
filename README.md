@@ -1,6 +1,6 @@
 # Ziri's Workshop
 
-<img src="assets/icon-option-ziri.png" width="96" align="right" alt="">
+<img src="assets/icon-option-handmade.png" width="96" align="right" alt="">
 
 Keeps Ziri Shortfuse's WoW Forever addons on your PC installed and up to date.
 Switch on the addons you want, and new versions arrive by themselves.
@@ -45,5 +45,5 @@ Your addons stay where they are.
 
 - New addon: add it to `addons.json`.
 - App change: bump `AppVersion` in `src/ZirisWorkshop.cs`, then publish.
-- Icon: `python tools/make_icon.py ziri` (or `bomb`), then publish.
+- Icon: `python tools/make_icon.py --from drawing.png` (PNG with a transparent background), then publish.
 - Build only: `build.cmd` (uses the C# compiler that comes with Windows).
