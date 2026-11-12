@@ -77,6 +77,7 @@ namespace ZirisWorkshop
         public bool StartWithWindows { get; set; }
         public bool FirstCheckDone { get; set; }
         public bool TrayHintShown { get; set; }
+        public bool SetupDone { get; set; }      // the settings box was seen once
 
         public Settings()
         {
@@ -97,6 +98,7 @@ namespace ZirisWorkshop
         public static bool Tray;          // --tray       start hidden in the tray
         public static bool CheckOnce;     // --check-once run one check without a window, then exit
         public static string Snapshot;    // --snapshot FILE.png  (test: picture of the window, then exit)
+        public static string SnapshotSettings; // --snapshot-settings FILE.png (test: picture of the settings box)
         public static int AfterUpdate;    // --after-update PID   (wait for the old copy to quit)
 
         public static bool Dev { get { return Data != null; } }
@@ -115,6 +117,7 @@ namespace ZirisWorkshop
                     case "--tray": Tray = true; break;
                     case "--check-once": CheckOnce = true; break;
                     case "--snapshot": Snapshot = next; i++; break;
+                    case "--snapshot-settings": SnapshotSettings = next; i++; break;
                     case "--after-update":
                         int pid;
                         if (int.TryParse(next, out pid)) AfterUpdate = pid;
@@ -148,7 +151,7 @@ namespace ZirisWorkshop
     static class Util
     {
         public const string AppName = "Ziri's Workshop";
-        public const string AppVersion = "1.1.2";
+        public const string AppVersion = "1.1.3";
         public const string RawBase = "https://raw.githubusercontent.com/Zyrumi/ziris-workshop/main/";
 
         static readonly object logLock = new object();
@@ -460,7 +463,7 @@ namespace ZirisWorkshop
             }
             if (Settings.ForeverPath == null)
             {
-                SetStatus("Can't find WoW Forever. Click Change and pick your World of Warcraft folder.");
+                SetStatus("Can't find WoW Forever. Open Settings (the cog at the top) and pick your World of Warcraft folder.");
                 return;
             }
 
@@ -883,19 +886,49 @@ namespace ZirisWorkshop
 
     enum StatusKind { Ok, Busy, Waiting, Off, Problem }
 
-    // Top of the window: Ziri, the title, and two gears that turn while work is going on.
+    // Little helpers for a window without the Windows title bar.
+    static class Native
+    {
+        [DllImport("user32.dll")] static extern bool ReleaseCapture();
+        [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, int msg, IntPtr w, IntPtr l);
+        [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int value, int size);
+
+        public const int WS_MINIMIZEBOX = 0x20000, WS_SYSMENU = 0x80000, CS_DROPSHADOW = 0x20000;
+
+        // Drag the whole window from a plain area (header, bottom strip).
+        public static void DragWindow(Control from)
+        {
+            var f = from.FindForm();
+            if (f == null) return;
+            ReleaseCapture();
+            SendMessage(f.Handle, 0xA1 /* WM_NCLBUTTONDOWN */, (IntPtr)2 /* HTCAPTION */, IntPtr.Zero);
+        }
+
+        // Windows 11 rounds the corners when asked; older Windows just keeps them square.
+        public static void RoundCorners(IntPtr h)
+        {
+            try { int round = 2; DwmSetWindowAttribute(h, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, ref round, 4); } catch { }
+        }
+    }
+
+    // Top of the window: Ziri, the title, two gears that turn while work is going on,
+    // and the Settings and Hide buttons. There is no Windows title bar, so you drag the window from here.
     class HeaderPlate : Control
     {
         readonly Image icon;
         readonly System.Windows.Forms.Timer spin;
         float angle;
         int jobs;
+        public readonly RoundButton SettingsButton = new RoundButton(RoundButton.Kind.Settings, "Settings");
+        public readonly RoundButton HideButton = new RoundButton(RoundButton.Kind.Hide, "Hide (keeps running in the tray)");
 
         public HeaderPlate(Image icon)
         {
             this.icon = icon;
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
-            Height = Theme.S(134);
+            Height = Theme.S(118);
+            Controls.Add(SettingsButton);
+            Controls.Add(HideButton);
             spin = new System.Windows.Forms.Timer { Interval = 33 };
             spin.Tick += (s, e) => { angle += 0.06f; Invalidate(GearArea()); };
         }
@@ -909,7 +942,21 @@ namespace ZirisWorkshop
 
         Rectangle GearArea()
         {
-            return new Rectangle(Width - Theme.S(132), 0, Theme.S(132), Theme.S(110));
+            return new Rectangle(Width - Theme.S(112), Theme.S(42), Theme.S(112), Theme.S(64));
+        }
+
+        protected override void OnLayout(LayoutEventArgs e)
+        {
+            base.OnLayout(e);
+            int top = Theme.S(10), right = Width - Theme.S(12);
+            HideButton.Location = new Point(right - HideButton.Width, top);
+            SettingsButton.Location = new Point(HideButton.Left - Theme.S(6) - SettingsButton.Width, top);
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (e.Button == MouseButtons.Left) Native.DragWindow(this);
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -921,22 +968,23 @@ namespace ZirisWorkshop
             float k = Theme.K;
 
             // gears (big one turns one way, the small one the other)
-            float bx = Width - 60 * k, by = 56 * k;
-            Theme.Gear(g, bx - 44 * k, by - 22 * k, 17 * k, 8, -angle * 1.7f + 0.2f, Theme.PinkLight, Theme.PinkDark, 1.6f * k);
-            Theme.Gear(g, bx, by, 30 * k, 11, angle, Theme.Brass, Theme.BrassDark, 2f * k);
-            Theme.Rivet(g, bx, by, 4 * k);
+            float bx = Width - 50 * k, by = 74 * k;
+            Theme.Gear(g, bx - 37 * k, by - 6 * k, 13 * k, 8, -angle * 1.7f + 0.2f, Theme.PinkLight, Theme.PinkDark, 1.5f * k);
+            Theme.Gear(g, bx, by, 24 * k, 11, angle, Theme.Brass, Theme.BrassDark, 1.8f * k);
+            Theme.Rivet(g, bx, by, 3.5f * k);
 
-            if (icon != null) g.DrawImage(icon, 16 * k, 12 * k, 100 * k, 100 * k);
-            int tx = Theme.S(128);
+            if (icon != null) g.DrawImage(icon, 12 * k, 8 * k, 88 * k, 88 * k);
+            int tx = Theme.S(110);
             var titleSize = TextRenderer.MeasureText("Ziri's Workshop", Theme.Title);
-            TextRenderer.DrawText(g, "Ziri's Workshop", Theme.Title, new Point(tx, Theme.S(22)), Theme.Ink, TextFormatFlags.NoPadding);
-            var sub = new Rectangle(tx + Theme.S(2), Theme.S(26) + titleSize.Height, Math.Max(80, Width - tx - Theme.S(140)), Theme.S(44));
+            TextRenderer.DrawText(g, "Ziri's Workshop", Theme.Title, new Point(tx, Theme.S(16)), Theme.Ink, TextFormatFlags.NoPadding);
+            var sub = new Rectangle(tx + Theme.S(2), Theme.S(20) + titleSize.Height, Math.Max(80, Width - tx - Theme.S(128)), Theme.S(42));
             TextRenderer.DrawText(g, "Switch on the addons you want. They stay up to date by themselves.", Theme.Body, sub, Theme.InkMid,
                 TextFormatFlags.WordBreak | TextFormatFlags.NoPadding);
 
             // brass pipe along the bottom, bolted down
-            float py = Height - 14 * k;
-            var pipe = new RectangleF(14 * k, py - 4 * k, Width - 28 * k, 8 * k);
+            float py = Height - 11 * k;
+            var pipe = new RectangleF(12 * k, py - 4 * k, Width - 24 * k, 8 * k);
+            if (pipe.Width < 20 * k) return;
             using (var path = Theme.Round(pipe, 4 * k))
             using (var b = new LinearGradientBrush(new RectangleF(pipe.X, pipe.Y - 1, pipe.Width, pipe.Height + 2), Theme.BrassLight, Theme.BrassDark, 90f))
             {
@@ -944,8 +992,61 @@ namespace ZirisWorkshop
                 using (var p = new Pen(Theme.BrassDark, k)) g.DrawPath(p, path);
             }
             foreach (float x in new[] { pipe.X + 8 * k, pipe.X + pipe.Width / 3, pipe.X + pipe.Width * 2 / 3, pipe.Right - 8 * k })
-                Theme.Rivet(g, x, py, 6 * k);
+                Theme.Rivet(g, x, py, 5.5f * k);
         }
+    }
+
+    // A small round brass button with a drawn symbol: a cog for Settings, a cross for Hide.
+    class RoundButton : Button
+    {
+        public enum Kind { Settings, Hide }
+        readonly Kind kind;
+        bool hover, down;
+        readonly ToolTip tip = new ToolTip();
+
+        public RoundButton(Kind kind, string name)
+        {
+            this.kind = kind;
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                | ControlStyles.SupportsTransparentBackColor, true);
+            BackColor = Color.Transparent;
+            Size = new Size(Theme.S(30), Theme.S(30));
+            Cursor = Cursors.Hand;
+            Text = "";
+            AccessibleName = name;
+            tip.SetToolTip(this, name);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            if (Parent != null) InvokePaintBackground(this, e);
+            float k = Theme.K;
+            float off = down ? k : 0;
+            var r = new RectangleF(k, k + off, Width - 3 * k, Height - 3 * k);
+            if (r.Width < 6 * k) return;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using (var b = new SolidBrush(Color.FromArgb(60, 110, 80, 40))) g.FillEllipse(b, r.X, r.Y + 1.5f * k - off, r.Width, r.Height);
+            using (var b = new LinearGradientBrush(r, hover ? Color.FromArgb(252, 232, 170) : Theme.BrassLight, down ? Theme.BrassDark : Theme.Brass, 90f))
+                g.FillEllipse(b, r);
+            using (var p = new Pen(Theme.BrassDark, 1.3f * k)) g.DrawEllipse(p, r);
+            float cx = r.X + r.Width / 2, cy = r.Y + r.Height / 2;
+            if (kind == Kind.Settings)
+                Theme.Gear(g, cx, cy, r.Width * 0.3f, 8, 0.3f, Theme.Ink, Color.Empty, 0);
+            else
+                using (var p = new Pen(Theme.Ink, 2.2f * k) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+                {
+                    float d = r.Width * 0.19f;
+                    g.DrawLine(p, cx - d, cy - d, cx + d, cy + d);
+                    g.DrawLine(p, cx - d, cy + d, cx + d, cy - d);
+                }
+            if (Focused && ShowFocusCues) Theme.FocusRing(g, RectangleF.Inflate(r, -2 * k, -2 * k), r.Width / 2, Theme.Ink);
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { base.OnMouseEnter(e); hover = true; Invalidate(); }
+        protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); hover = false; down = false; Invalidate(); }
+        protected override void OnMouseDown(MouseEventArgs e) { base.OnMouseDown(e); down = true; Invalidate(); }
+        protected override void OnMouseUp(MouseEventArgs e) { base.OnMouseUp(e); down = false; Invalidate(); }
     }
 
     // The list area: blueprint paper with a big faint cog in the corner.
@@ -974,11 +1075,11 @@ namespace ZirisWorkshop
         }
     }
 
-    // One addon on a riveted metal plate, with its on/off lever.
+    // One addon as a compact riveted plate: letter badge, name, status, description and the lever.
     class AddonCard : Control
     {
         public string Id;
-        string title = "", desc = "", status = "";
+        string title = "", desc = "", status = "", fullStatus = "", initials = "";
         StatusKind kind;
         bool on, hover, hoverToggle;
         public event Action<AddonCard> ToggleClicked;
@@ -994,56 +1095,60 @@ namespace ZirisWorkshop
         }
 
         public bool On { get { return on; } }
+        public string FullStatus { get { return fullStatus; } }
 
-        public void Set(string t, string d, string s, StatusKind k, bool isOn)
+        // shortStatus goes in the little pill, longStatus in the tooltip and for screen readers
+        public void Set(string t, string d, string shortStatus, string longStatus, StatusKind k, bool isOn)
         {
-            title = t ?? ""; desc = d ?? ""; status = s ?? ""; kind = k; on = isOn;
+            title = t ?? ""; desc = d ?? ""; status = shortStatus ?? ""; fullStatus = longStatus ?? ""; kind = k; on = isOn;
+            initials = Initials(title);
             AccessibleName = title;
-            AccessibleDescription = (on ? "On. " : "Off. ") + status + " " + desc;
+            AccessibleDescription = (on ? "On. " : "Off. ") + fullStatus + " " + desc;
             int h = Measure();
             if (Height != h) Height = h;
             Invalidate();
         }
 
-        int Pad { get { return Theme.S(16); } }
+        // "Loot Highlight" -> LH, "FriendsCraft" -> FC
+        static string Initials(string t)
+        {
+            var caps = new string(t.Where(char.IsUpper).Take(2).ToArray());
+            if (caps.Length == 2) return caps;
+            var words = t.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (words.Length >= 2) return (words[0].Substring(0, 1) + words[1].Substring(0, 1)).ToUpperInvariant();
+            return t.Length >= 2 ? t.Substring(0, 2).ToUpperInvariant() : t.ToUpperInvariant();
+        }
+
+        int Pad { get { return Theme.S(11); } }
+        int Side { get { return Theme.S(14); } }
+        int Badge { get { return Theme.S(38); } }
+        int Shadow { get { return Theme.S(5); } }
         int ToggleW { get { return Theme.S(66); } }
-        int TextX { get { return Pad + Theme.S(28); } }
-        int TextW { get { return Math.Max(60, Width - TextX - ToggleW - Pad - Theme.S(14)); } }
-        int TitleH { get { return TextRenderer.MeasureText("Ag", Theme.CardTitle).Height; } }
+        int TextX { get { return Side + Badge + Theme.S(12); } }
+        int TextW { get { return Math.Max(60, Width - TextX - ToggleW - Side - Theme.S(14)); } }
+        int RowH { get { return Math.Max(TextRenderer.MeasureText("Ag", Theme.CardTitle).Height, Theme.S(22)); } }
 
         // Measure and draw text the same way, so wrapped lines and heights always agree.
         const TextFormatFlags Wrap = TextFormatFlags.WordBreak | TextFormatFlags.NoPadding | TextFormatFlags.TextBoxControl;
+        const TextFormatFlags Line = TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis;
 
-        static Size MeasureWrapped(string text, Font font, int width)
+        static Size MeasureWith(string text, Font font, int width, TextFormatFlags flags)
         {
             using (var bmp = new Bitmap(1, 1))
             using (var g = Graphics.FromImage(bmp))
-                return TextRenderer.MeasureText(g, text, font, new Size(width, int.MaxValue), Wrap);
+                return TextRenderer.MeasureText(g, text, font, new Size(width, int.MaxValue), flags);
         }
 
-        int DescH()
-        {
-            if (desc.Length == 0) return 0;
-            return MeasureWrapped(desc, Theme.Body, TextW).Height;
-        }
-
-        int PillTextH()
-        {
-            return MeasureWrapped(status, Theme.Label, TextW - Theme.S(34)).Height;
-        }
-
-        int Measure()
-        {
-            int pill = Math.Max(Theme.S(26), PillTextH() + Theme.S(10));
-            return Pad + TitleH + Theme.S(3) + DescH() + Theme.S(10) + pill + Pad + Theme.S(4);
-        }
+        int DescH() { return desc.Length == 0 ? 0 : MeasureWith(desc, Theme.Body, TextW, Wrap).Height; }
+        int ContentH() { return RowH + (desc.Length == 0 ? 0 : Theme.S(2) + DescH()); }
+        int Measure() { return Math.Max(Badge, ContentH()) + 2 * Pad + Shadow; }
 
         Rectangle ToggleRect
         {
             get
             {
                 int h = Theme.S(30);
-                return new Rectangle(Width - Pad - ToggleW - Theme.S(4), Pad + (TitleH - h) / 2 + Theme.S(2), ToggleW, h);
+                return new Rectangle(Width - Side - ToggleW - Theme.S(2), (Height - Shadow - h) / 2 + Theme.S(1), ToggleW, h);
             }
         }
 
@@ -1059,37 +1164,43 @@ namespace ZirisWorkshop
             var g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
             float k = Theme.K;
-            var r = new RectangleF(2 * k, 2 * k, Width - 6 * k, Height - 8 * k);
+            var r = new RectangleF(2 * k, 2 * k, Width - 6 * k, Height - Shadow - 1 * k);
             if (r.Width < 30 * k || r.Height < 20 * k) return; // not laid out yet
 
-            using (var shadow = Theme.Round(new RectangleF(r.X + k, r.Y + 4 * k, r.Width, r.Height), 12 * k))
+            using (var shadow = Theme.Round(new RectangleF(r.X + k, r.Y + 3.5f * k, r.Width, r.Height), 10 * k))
             using (var b = new SolidBrush(Color.FromArgb(46, 110, 80, 40))) g.FillPath(b, shadow);
-            using (var path = Theme.Round(r, 12 * k))
+            using (var path = Theme.Round(r, 10 * k))
             {
                 using (var b = new LinearGradientBrush(r, Theme.Steel1, Theme.Steel2, 90f)) g.FillPath(b, path);
-                using (var p = new Pen(hover ? Theme.Brass : Theme.BrassDark, 2f * k)) g.DrawPath(p, path);
+                using (var p = new Pen(hover ? Theme.Brass : Theme.BrassDark, 1.8f * k)) g.DrawPath(p, path);
             }
-            var inner = RectangleF.Inflate(r, -5 * k, -5 * k);
-            using (var path = Theme.Round(inner, 8 * k))
-            using (var p = new Pen(Color.FromArgb(70, Theme.Brass), k)) g.DrawPath(p, path);
-            float ri = 11 * k;
+            float ri = 7.5f * k;
             foreach (var pt in new[] { new PointF(r.X + ri, r.Y + ri), new PointF(r.Right - ri, r.Y + ri), new PointF(r.X + ri, r.Bottom - ri), new PointF(r.Right - ri, r.Bottom - ri) })
-                Theme.Rivet(g, pt.X, pt.Y, 3.6f * k);
+                Theme.Rivet(g, pt.X, pt.Y, 2.6f * k);
 
-            int y = Pad;
-            int th = TitleH;
-            Theme.Gear(g, Pad + 12 * k, y + th / 2f + k, 10 * k, 8, 0.2f, on ? Theme.Pink : Theme.OffTrack, on ? Theme.PinkDark : Theme.InkMid, 1.4f * k);
-            TextRenderer.DrawText(g, title, Theme.CardTitle, new Rectangle(TextX, y, TextW, th), Theme.Ink, TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
-            y += th + Theme.S(3);
-            int dh = DescH();
-            if (dh > 0)
-                TextRenderer.DrawText(g, desc, Theme.Body, new Rectangle(TextX, y, TextW, dh), Theme.InkMid, Wrap);
-            y += dh + Theme.S(10);
-            DrawPill(g, new Rectangle(TextX - Theme.S(2), y, TextW + Theme.S(2), Math.Max(Theme.S(26), PillTextH() + Theme.S(10))));
+            // letter badge: a brass-rimmed disc, deep pink when on, pale grey when off
+            float mid = r.Y + r.Height / 2;
+            var badge = new RectangleF(Side, mid - Badge / 2f, Badge, Badge);
+            using (var b = new SolidBrush(on ? Theme.PinkDark : Theme.OffLight)) g.FillEllipse(b, badge);
+            using (var p = new Pen(Theme.Brass, 2.4f * k)) g.DrawEllipse(p, RectangleF.Inflate(badge, -1.2f * k, -1.2f * k));
+            using (var p = new Pen(Theme.BrassDark, 1f * k)) g.DrawEllipse(p, badge);
+            TextRenderer.DrawText(g, initials, Theme.Button, Rectangle.Round(badge), on ? Color.White : Theme.Ink,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+
+            // name, then the status pill on the same line, then the description
+            int y = (int)(mid - ContentH() / 2f);
+            int titleW = Math.Min(TextW, TextRenderer.MeasureText(title, Theme.CardTitle, Size.Empty, TextFormatFlags.NoPadding).Width);
+            TextRenderer.DrawText(g, title, Theme.CardTitle, new Rectangle(TextX, y, titleW + Theme.S(2), RowH), Theme.Ink, Line);
+            int px = TextX + titleW + Theme.S(10);
+            int room = TextX + TextW - px;
+            if (status.Length > 0 && room >= Theme.S(56))
+                DrawPill(g, new Rectangle(px, y + (RowH - Theme.S(22)) / 2, room, Theme.S(22)));
+            if (desc.Length > 0)
+                TextRenderer.DrawText(g, desc, Theme.Body, new Rectangle(TextX, y + RowH + Theme.S(2), TextW, DescH()), Theme.InkMid, Wrap);
 
             Theme.Toggle(g, ToggleRect, on, hoverToggle);
             if (Focused && ShowFocusCues)
-                Theme.FocusRing(g, RectangleF.Inflate(r, -3 * k, -3 * k), 10 * k, Theme.PinkDark);
+                Theme.FocusRing(g, RectangleF.Inflate(r, -3 * k, -3 * k), 8 * k, Theme.PinkDark);
         }
 
         void DrawPill(Graphics g, Rectangle area)
@@ -1104,19 +1215,18 @@ namespace ZirisWorkshop
                 case StatusKind.Problem: bg = Theme.RustLight; edge = Theme.Rust; glyph = "!"; break;
                 default: bg = Theme.OffLight; edge = Theme.InkMid; glyph = "○"; break;
             }
-            int textH = PillTextH();
-            int textW = MeasureWrapped(status, Theme.Label, TextW - Theme.S(34)).Width;
-            var pill = new RectangleF(area.X, area.Y, Math.Min(area.Width, textW + Theme.S(36)), area.Height);
-            using (var path = Theme.Round(pill, Math.Min(pill.Height / 2, 13 * Theme.K)))
+            int textW = TextRenderer.MeasureText(status, Theme.Label, Size.Empty, TextFormatFlags.NoPadding).Width;
+            var pill = new RectangleF(area.X, area.Y, Math.Min(area.Width, textW + Theme.S(34)), area.Height);
+            using (var path = Theme.Round(pill, pill.Height / 2))
             {
                 using (var b = new SolidBrush(bg)) g.FillPath(b, path);
-                using (var p = new Pen(edge, 1.2f * Theme.K)) g.DrawPath(p, path);
+                using (var p = new Pen(edge, 1.1f * Theme.K)) g.DrawPath(p, path);
             }
-            var gl = new Rectangle((int)pill.X + Theme.S(6), (int)pill.Y, Theme.S(20), (int)pill.Height);
+            var gl = new Rectangle((int)pill.X + Theme.S(5), (int)pill.Y, Theme.S(18), (int)pill.Height);
             TextRenderer.DrawText(g, glyph, kind == StatusKind.Problem ? Theme.Tiny : Theme.Symbol, gl, edge,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
-            var tr = new Rectangle((int)pill.X + Theme.S(28), (int)pill.Y + ((int)pill.Height - textH) / 2, (int)pill.Width - Theme.S(34), textH);
-            TextRenderer.DrawText(g, status, Theme.Label, tr, Theme.Ink, Wrap);
+            var tr = new Rectangle((int)pill.X + Theme.S(24), (int)pill.Y, (int)pill.Width - Theme.S(31), (int)pill.Height);
+            TextRenderer.DrawText(g, status, Theme.Label, tr, Theme.Ink, Line);
         }
 
         void Raise()
@@ -1281,56 +1391,37 @@ namespace ZirisWorkshop
         protected override void OnMouseUp(MouseEventArgs e) { base.OnMouseUp(e); down = false; Invalidate(); }
     }
 
-    // The workbench along the bottom: dark wood-and-iron strip with a brass edge.
-    // The dark workbench strip at the bottom. Its words are drawn straight onto it on one grid,
-    // so everything lines up; only the lever and buttons are real controls.
+    // The dark workbench strip at the bottom: version, last check, and Check now.
     class Bench : Control
     {
-        public readonly BrassButton Change = new BrassButton("Change...");
         public readonly BrassButton CheckNow = new BrassButton("Check now");
-        public readonly BrassButton HideButton = new BrassButton("Hide");
-        public readonly LeverSwitch StartSwitch = new LeverSwitch("Start with Windows (recommended, so updates arrive by themselves)");
-        string path = "", status = "";
+        string status = "";
         readonly string version;
 
         static int Pad { get { return Theme.S(18); } }
-        static int Row { get { return Theme.S(44); } }
-        static int Top0 { get { return Theme.S(14); } }          // below the brass edge
-        static int VersionRow { get { return Theme.S(22); } }
+        static int Edge { get { return Theme.S(6); } }   // the brass edge on top
 
         public Bench(string version)
         {
             this.version = "Version " + version;
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
-            Height = Top0 + 3 * Row + VersionRow + Theme.S(8);
-            Controls.Add(Change);
-            Controls.Add(StartSwitch);
+            Height = Edge + Theme.S(52);
             Controls.Add(CheckNow);
-            Controls.Add(HideButton);
-            AccessibleRole = AccessibleRole.Grouping;
+            AccessibleRole = AccessibleRole.StatusBar;
         }
 
-        public string PathText { set { if (value != path) { path = value ?? ""; AccessibleDescription = "WoW folder: " + path; Invalidate(); } } }
         public string StatusText { set { if (value != status) { status = value ?? ""; AccessibleName = status; Invalidate(); } } }
-
-        // left column: the small "WoW folder" caption; path and lever words start right after it
-        int TextColumn
-        {
-            get { return Pad + Math.Max(TextRenderer.MeasureText("WoW folder", Theme.Tiny).Width + Theme.S(14), Theme.S(60)); }
-        }
-
-        int RowY(int row) { return Top0 + row * Row; }
 
         protected override void OnLayout(LayoutEventArgs e)
         {
             base.OnLayout(e);
-            int right = Width - Pad;
-            int col = TextColumn;
-            Change.Location = new Point(right - Change.Width, RowY(0) + (Row - Change.Height) / 2);
-            StartSwitch.TextLeft = col - Pad;
-            StartSwitch.Bounds = new Rectangle(Pad, RowY(1) + (Row - StartSwitch.Height) / 2, Math.Max(10, right - Pad), StartSwitch.Height);
-            HideButton.Location = new Point(right - HideButton.Width, RowY(2) + (Row - HideButton.Height) / 2);
-            CheckNow.Location = new Point(HideButton.Left - Theme.S(10) - CheckNow.Width, HideButton.Top);
+            CheckNow.Location = new Point(Width - Pad - CheckNow.Width, Edge + (Height - Edge - CheckNow.Height) / 2);
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (e.Button == MouseButtons.Left) Native.DragWindow(this);
         }
 
         protected override void OnPaintBackground(PaintEventArgs e)
@@ -1344,17 +1435,8 @@ namespace ZirisWorkshop
                 return;
             }
             using (var b = new LinearGradientBrush(ClientRectangle, Theme.Bench1, Theme.Bench2, 90f)) g.FillRectangle(b, ClientRectangle);
-            // planks: seams between the rows, never through the words
-            using (var p = new Pen(Color.FromArgb(48, 0, 0, 0), k))
-            using (var hl = new Pen(Color.FromArgb(14, 255, 255, 255), k))
-                for (int row = 1; row <= 3; row++)
-                {
-                    int y = RowY(row);
-                    g.DrawLine(p, 0, y, Width, y);
-                    g.DrawLine(hl, 0, y + k, Width, y + k);
-                }
-            using (var b = new LinearGradientBrush(new Rectangle(0, 0, Width, Theme.S(6)), Theme.BrassLight, Theme.BrassDark, 90f))
-                g.FillRectangle(b, 0, 0, Width, Theme.S(6));
+            using (var b = new LinearGradientBrush(new Rectangle(0, 0, Width, Edge), Theme.BrassLight, Theme.BrassDark, 90f))
+                g.FillRectangle(b, 0, 0, Width, Edge);
             g.SmoothingMode = SmoothingMode.AntiAlias;
             Theme.Rivet(g, 12 * k, 3 * k, 4 * k);
             Theme.Rivet(g, Width - 12 * k, 3 * k, 4 * k);
@@ -1365,15 +1447,156 @@ namespace ZirisWorkshop
             if (Width < Theme.S(100)) return;
             var g = e.Graphics;
             const TextFormatFlags Line = TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis;
-            int col = TextColumn;
-            // row 1: caption, path, [Change...]
-            TextRenderer.DrawText(g, "WoW folder", Theme.Tiny, new Rectangle(Pad, RowY(0), col - Pad, Row), Theme.CreamDim, Line);
-            TextRenderer.DrawText(g, path, Theme.Body, new Rectangle(col, RowY(0), Math.Max(10, Change.Left - Theme.S(12) - col), Row), Theme.Cream,
-                Line | TextFormatFlags.PathEllipsis);
-            // row 3: status, [Check now] [Hide]
-            TextRenderer.DrawText(g, status, Theme.Body, new Rectangle(Pad, RowY(2), Math.Max(10, CheckNow.Left - Theme.S(12) - Pad), Row), Theme.Cream, Line);
-            // version, small, at the bottom
-            TextRenderer.DrawText(g, version, Theme.Tiny, new Rectangle(Pad, RowY(3), Width - 2 * Pad, VersionRow), Theme.CreamDim, Line);
+            var row = new Rectangle(Pad, Edge, Width - 2 * Pad, Height - Edge);
+            int vw = TextRenderer.MeasureText(version, Theme.Tiny, Size.Empty, TextFormatFlags.NoPadding).Width;
+            TextRenderer.DrawText(g, version, Theme.Tiny, new Rectangle(row.X, row.Y, vw + Theme.S(2), row.Height), Theme.CreamDim, Line);
+            int sx = row.X + vw + Theme.S(10);
+            using (var b = new SolidBrush(Theme.Brass)) g.FillEllipse(b, sx, row.Y + row.Height / 2f - 2 * Theme.K, 4 * Theme.K, 4 * Theme.K);
+            sx += Theme.S(14);
+            TextRenderer.DrawText(g, status, Theme.Body, new Rectangle(sx, row.Y, Math.Max(10, CheckNow.Left - Theme.S(12) - sx), row.Height), Theme.Cream, Line);
+        }
+    }
+
+    // Settings in a small box of its own: the WoW folder and Start with Windows.
+    // It also opens by itself the first time, so the folder gets confirmed before anything else.
+    class SettingsForm : Form
+    {
+        readonly bool firstRun;
+        public string ForeverPath;
+        public readonly LeverSwitch StartSwitch;
+        readonly BrassButton change, done;
+        readonly int pad, titleY, introY, introH, captionY, noteY;
+        Rectangle pathBox;
+
+        const string Intro = "Check that this is your WoW Forever folder, then switch on the addons you want.";
+        const string Note = "Recommended, so updates arrive by themselves.";
+
+        public SettingsForm(string path, bool startWithWindows, bool firstRun)
+        {
+            this.firstRun = firstRun;
+            ForeverPath = path;
+            AutoScaleMode = AutoScaleMode.None;
+            FormBorderStyle = FormBorderStyle.None;
+            StartPosition = FormStartPosition.CenterParent;
+            ShowInTaskbar = false;
+            KeyPreview = true;
+            DoubleBuffered = true;
+            BackColor = Theme.Paper;
+            Font = Theme.Body;
+            Text = firstRun ? "Welcome" : "Settings";
+
+            int w = Theme.S(470);
+            pad = Theme.S(22);
+            change = new BrassButton("Change...");
+            done = new BrassButton(firstRun ? "Looks good" : "Done");
+            StartSwitch = new LeverSwitch("Start with Windows") { ForeColor = Theme.Ink };
+            StartSwitch.Checked = startWithWindows;
+
+            int y = pad;
+            titleY = y;
+            y += TextRenderer.MeasureText("Ag", Theme.CardTitle).Height + Theme.S(4);
+            if (firstRun)
+            {
+                introY = y;
+                introH = TextRenderer.MeasureText(Intro, Theme.Body, new Size(w - 2 * pad, int.MaxValue), TextFormatFlags.WordBreak | TextFormatFlags.NoPadding).Height;
+                y += introH;
+            }
+            y += Theme.S(16);
+            captionY = y;
+            y += TextRenderer.MeasureText("Ag", Theme.Tiny).Height + Theme.S(6);
+            int boxH = Theme.S(36);
+            pathBox = new Rectangle(pad, y, w - 2 * pad - change.Width - Theme.S(10), boxH);
+            change.Location = new Point(w - pad - change.Width, y + (boxH - change.Height) / 2);
+            y += boxH + Theme.S(18);
+            StartSwitch.Location = new Point(pad - Theme.S(2), y);
+            StartSwitch.Width = w - 2 * pad;
+            y += StartSwitch.Height;
+            noteY = y;
+            y += TextRenderer.MeasureText("Ag", Theme.Body).Height + Theme.S(20);
+            done.Location = new Point(w - pad - done.Width, y);
+            y += done.Height + pad;
+            ClientSize = new Size(w, y);
+
+            Controls.Add(change);
+            Controls.Add(StartSwitch);
+            Controls.Add(done);
+            change.Click += (s, e) => PickFolder();
+            done.Click += (s, e) => { DialogResult = DialogResult.OK; Close(); };
+            AcceptButton = done;
+            KeyDown += (s, e) => { if (e.KeyCode == Keys.Escape) { e.Handled = true; done.PerformClick(); } };
+        }
+
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                var cp = base.CreateParams;
+                cp.ClassStyle |= Native.CS_DROPSHADOW;
+                return cp;
+            }
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            Native.RoundCorners(Handle);
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (e.Button == MouseButtons.Left) Native.DragWindow(this);
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            Theme.PaperGrid(g, ClientRectangle, 0);
+            using (var p = new Pen(Theme.BrassDark, Math.Max(1, Theme.S(2)))) g.DrawRectangle(p, Theme.S(1), Theme.S(1), Width - Theme.S(2) - 1, Height - Theme.S(2) - 1);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            float k = Theme.K;
+            int w = ClientSize.Width - 2 * pad;
+            TextRenderer.DrawText(g, firstRun ? "Welcome to Ziri's Workshop" : "Settings", Theme.CardTitle, new Point(pad, titleY), Theme.Ink, TextFormatFlags.NoPadding);
+            if (firstRun)
+                TextRenderer.DrawText(g, Intro, Theme.Body, new Rectangle(pad, introY, w, introH), Theme.InkMid, TextFormatFlags.WordBreak | TextFormatFlags.NoPadding);
+            TextRenderer.DrawText(g, "WoW Forever folder", Theme.Tiny, new Point(pad, captionY), Theme.InkMid, TextFormatFlags.NoPadding);
+
+            bool found = !string.IsNullOrEmpty(ForeverPath);
+            using (var path = Theme.Round(pathBox, 8 * k))
+            {
+                using (var b = new SolidBrush(found ? Theme.Steel1 : Theme.RustLight)) g.FillPath(b, path);
+                using (var p = new Pen(found ? Theme.BrassDark : Theme.Rust, 1.3f * k)) g.DrawPath(p, path);
+            }
+            var inner = Rectangle.Inflate(pathBox, -Theme.S(10), 0);
+            TextRenderer.DrawText(g, found ? ForeverPath : "! Not found yet. Click Change and pick your World of Warcraft folder.", Theme.Body, inner, Theme.Ink,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.PathEllipsis);
+
+            TextRenderer.DrawText(g, Note, Theme.Body, new Point(StartSwitch.Left + StartSwitch.TextLeft, noteY), Theme.InkMid, TextFormatFlags.NoPadding);
+        }
+
+        void PickFolder()
+        {
+            using (var dlg = new FolderBrowserDialog())
+            {
+                dlg.Description = "Pick your World of Warcraft folder (the one with a _forever_ folder inside).";
+                dlg.ShowNewFolderButton = false;
+                if (!string.IsNullOrEmpty(ForeverPath)) dlg.SelectedPath = ForeverPath;
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+                string f = Workshop.NormalizeForever(dlg.SelectedPath);
+                if (f == null)
+                {
+                    MessageBox.Show(this, "Couldn't find WoW Forever there.\n\nPick the World of Warcraft folder that has a _forever_ folder inside.",
+                        Util.AppName, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+                ForeverPath = f;
+                Invalidate();
+            }
         }
     }
 
@@ -1384,6 +1607,8 @@ namespace ZirisWorkshop
         readonly HeaderPlate header;
         readonly PaperFlow list;
         readonly Bench bench;
+        readonly ToolTip tips = new ToolTip();
+        bool settingsOpen;
         readonly Dictionary<string, AddonCard> cards = new Dictionary<string, AddonCard>();
         readonly System.Windows.Forms.Timer every3h;
         readonly System.Windows.Forms.Timer firstCheck;
@@ -1401,10 +1626,11 @@ namespace ZirisWorkshop
             Font = Theme.Body;
             BackColor = Theme.Paper;
             ForeColor = Theme.Ink;
-            // tall enough for three plates, but never taller than the screen
+            // no Windows title bar: the header is the top, and the window grows with the list
+            FormBorderStyle = FormBorderStyle.None;
+            Padding = new Padding(Math.Max(1, Theme.S(1)));
             var work = Screen.PrimaryScreen.WorkingArea;
-            ClientSize = new Size(Math.Min(Theme.S(600), work.Width - 40), Math.Min(Theme.S(760), work.Height - 60));
-            MinimumSize = new Size(Theme.S(500), Theme.S(500));
+            ClientSize = new Size(Math.Min(Theme.S(600), work.Width - 40), Math.Min(Theme.S(460), work.Height - 60));
             StartPosition = FormStartPosition.CenterScreen;
             Icon = LoadIcon(32);
             DoubleBuffered = true;
@@ -1415,21 +1641,14 @@ namespace ZirisWorkshop
             list = new PaperFlow
             {
                 Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false,
-                AutoScroll = true, Padding = new Padding(Theme.S(14), Theme.S(6), Theme.S(14), Theme.S(10))
+                AutoScroll = true, Padding = new Padding(Theme.S(12), Theme.S(8), Theme.S(12), Theme.S(8))
             };
             list.Resize += (s, e) => FitCards();
 
+            header.SettingsButton.Click += (s, e) => OpenSettings(false);
+            header.HideButton.Click += (s, e) => HideToTray();
             bench = new Bench(Util.AppVersion) { Dock = DockStyle.Bottom };
-            bench.Change.Click += (s, e) => PickFolder();
-            bench.StartSwitch.Checked = ws.Settings.StartWithWindows;
-            bench.StartSwitch.CheckedChanged += (s, e) =>
-            {
-                ws.Settings.StartWithWindows = bench.StartSwitch.Checked;
-                ws.SaveSettings();
-                ws.ApplyStartWithWindows();
-            };
             bench.CheckNow.Click += (s, e) => RunCheck("button");
-            bench.HideButton.Click += (s, e) => HideToTray();
 
             Controls.Add(list);
             Controls.Add(bench);
@@ -1465,9 +1684,115 @@ namespace ZirisWorkshop
                 }
             };
 
+            Shown += (s, e) =>
+            {
+                if (Opts.SnapshotSettings != null) SnapshotSettingsBox();
+                else MaybeFirstRun();
+            };
+
             ws.WatchSaves();
             RefreshAll();
             ResumeLayout(true);
+        }
+
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                var cp = base.CreateParams;
+                cp.Style |= Native.WS_MINIMIZEBOX | Native.WS_SYSMENU; // taskbar click still minimizes
+                cp.ClassStyle |= Native.CS_DROPSHADOW;
+                return cp;
+            }
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            Native.RoundCorners(Handle);
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            base.OnPaintBackground(e);
+            using (var p = new Pen(Theme.BrassDark)) e.Graphics.DrawRectangle(p, 0, 0, ClientSize.Width - 1, ClientSize.Height - 1);
+        }
+
+        // Grow or shrink with the list: room for about six addons, then it scrolls.
+        void FitWindow()
+        {
+            var work = Screen.FromControl(this).WorkingArea;
+            int content = list.Padding.Vertical;
+            foreach (Control c in list.Controls) content += c.Height + c.Margin.Vertical;
+            int chrome = header.Height + bench.Height + Padding.Vertical;
+            int maxList = Math.Max(Theme.S(120), Math.Min(Theme.S(560), work.Height - 40 - chrome));
+            int h = chrome + Math.Max(Theme.S(90), Math.Min(content, maxList));
+            if (ClientSize.Height == h) return;
+            ClientSize = new Size(ClientSize.Width, h);
+            if (Bottom > work.Bottom) Top = Math.Max(work.Top, work.Bottom - Height);
+        }
+
+        void MaybeFirstRun()
+        {
+            if (ws.Settings.SetupDone || Opts.Snapshot != null || !Visible) return;
+            BeginInvoke(new Action(() => OpenSettings(true)));
+        }
+
+        void OpenSettings(bool firstRun)
+        {
+            if (settingsOpen) return;
+            settingsOpen = true;
+            try
+            {
+                string path = ws.Settings.ForeverPath ?? Workshop.FindForever();
+                using (var f = new SettingsForm(path, ws.Settings.StartWithWindows, firstRun))
+                {
+                    f.ShowDialog(this);
+                    bool folderChanged = f.ForeverPath != null && !string.Equals(f.ForeverPath, ws.Settings.ForeverPath, StringComparison.OrdinalIgnoreCase);
+                    if (folderChanged) ws.Settings.ForeverPath = f.ForeverPath;
+                    if (ws.Settings.StartWithWindows != f.StartSwitch.Checked)
+                    {
+                        ws.Settings.StartWithWindows = f.StartSwitch.Checked;
+                        ws.ApplyStartWithWindows();
+                    }
+                    ws.Settings.SetupDone = true;
+                    ws.SaveSettings();
+                    if (folderChanged)
+                    {
+                        ws.WatchSaves();
+                        RefreshAll();
+                        RunCheck("folder changed");
+                    }
+                }
+            }
+            finally { settingsOpen = false; }
+        }
+
+        // Test helper: a picture of the settings box, then quit.
+        void SnapshotSettingsBox()
+        {
+            var f = new SettingsForm(ws.Settings.ForeverPath ?? Workshop.FindForever(), ws.Settings.StartWithWindows, !ws.Settings.SetupDone);
+            f.StartPosition = FormStartPosition.Manual;
+            f.Location = new Point(Left + (Width - f.Width) / 2, Top + Theme.S(80));
+            f.TopMost = true;
+            f.Show(this);
+            var t = new System.Windows.Forms.Timer { Interval = 900 };
+            t.Tick += (s, e) =>
+            {
+                t.Stop();
+                try
+                {
+                    var b = f.Bounds;
+                    using (var bmp = new Bitmap(b.Width, b.Height))
+                    {
+                        using (var g = Graphics.FromImage(bmp)) g.CopyFromScreen(b.Location, Point.Empty, b.Size);
+                        bmp.Save(Opts.SnapshotSettings, System.Drawing.Imaging.ImageFormat.Png);
+                    }
+                }
+                catch (Exception ex) { Util.Log("snapshot: " + ex.Message); }
+                Quit();
+            };
+            t.Start();
         }
 
         static Icon LoadIcon(int size)
@@ -1532,13 +1857,13 @@ namespace ZirisWorkshop
 
         void RefreshAll()
         {
-            bench.PathText = ws.Settings.ForeverPath ?? "not found yet";
             bench.StatusText = ws.Status;
             var m = ws.Manifest;
             if (m == null || m.addons == null)
             {
                 if (cards.Count == 0 && list.Controls.Count == 0)
                     list.Controls.Add(new Label { Text = "Getting the list of addons...", AutoSize = true, ForeColor = Theme.InkMid, BackColor = Color.Transparent, Margin = new Padding(Theme.S(6), Theme.S(12), 0, 0) });
+                FitWindow();
                 return;
             }
             var ids = m.addons.Select(a => a.id).ToList();
@@ -1549,7 +1874,7 @@ namespace ZirisWorkshop
                 cards.Clear();
                 foreach (var a in m.addons)
                 {
-                    var c = new AddonCard(a.id) { Margin = new Padding(0, Theme.S(6), 0, Theme.S(4)) };
+                    var c = new AddonCard(a.id) { Margin = new Padding(0, Theme.S(4), 0, Theme.S(4)) };
                     c.ToggleClicked += OnToggle;
                     cards[a.id] = c;
                     list.Controls.Add(c);
@@ -1558,6 +1883,7 @@ namespace ZirisWorkshop
                 FitCards();
             }
             foreach (var a in m.addons) UpdateCard(cards[a.id], a);
+            FitWindow();
         }
 
         void FitCards()
@@ -1572,28 +1898,31 @@ namespace ZirisWorkshop
         {
             bool wanted = ws.IsWanted(a.id);
             string have = ws.InstalledVersion(a.id);
-            string note;
-            string text;
+            string note, shortText, longText;
             StatusKind kind;
             if (ws.Notes.TryGetValue(a.id, out note) && note != null)
             {
-                text = note;
+                longText = note;
                 kind = note.StartsWith("Couldn't") ? StatusKind.Problem : StatusKind.Busy;
+                int colon = note.IndexOf(':');
+                shortText = colon > 0 ? note.Substring(0, colon) : note;
             }
             else if (wanted)
             {
-                if (have == null) { text = "Not installed yet."; kind = StatusKind.Waiting; }
-                else if (Util.Newer(a.version, have)) { text = "Version " + have + ". Update to " + a.version + " waiting."; kind = StatusKind.Waiting; }
-                else { text = "Version " + have + ", up to date."; kind = StatusKind.Ok; }
+                if (have == null) { shortText = "Waiting to install"; longText = "Not installed yet."; kind = StatusKind.Waiting; }
+                else if (Util.Newer(a.version, have)) { shortText = "Update waiting"; longText = "Version " + have + ". Update to " + a.version + " waiting."; kind = StatusKind.Waiting; }
+                else { shortText = have + ", up to date"; longText = "Version " + have + ", up to date."; kind = StatusKind.Ok; }
             }
             else
             {
                 kind = StatusKind.Off;
-                text = have == null
+                shortText = have == null ? "" : have + ", not updated";
+                longText = have == null
                     ? "Not installed. Switch it on to add it."
                     : "Version " + have + " is installed but switched off, so it isn't kept up to date.";
             }
-            c.Set(a.name ?? a.id, a.description, text, kind, wanted);
+            c.Set(a.name ?? a.id, a.description, shortText, longText, kind, wanted);
+            if (tips.GetToolTip(c) != longText) tips.SetToolTip(c, longText);
         }
 
         void OnToggle(AddonCard c)
@@ -1624,29 +1953,6 @@ namespace ZirisWorkshop
 
         // ---------------- other actions ----------------
 
-        void PickFolder()
-        {
-            using (var dlg = new FolderBrowserDialog())
-            {
-                dlg.Description = "Pick your World of Warcraft folder (the one with a _forever_ folder inside).";
-                dlg.ShowNewFolderButton = false;
-                if (ws.Settings.ForeverPath != null) dlg.SelectedPath = ws.Settings.ForeverPath;
-                if (dlg.ShowDialog(this) != DialogResult.OK) return;
-                string f = Workshop.NormalizeForever(dlg.SelectedPath);
-                if (f == null)
-                {
-                    MessageBox.Show(this, "Couldn't find WoW Forever there.\n\nPick the World of Warcraft folder that has a _forever_ folder inside.",
-                        Util.AppName, MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    return;
-                }
-                ws.Settings.ForeverPath = f;
-                ws.SaveSettings();
-                ws.WatchSaves();
-                RefreshAll();
-                RunCheck("folder changed");
-            }
-        }
-
         void Announce(List<string> updated, List<string> fresh)
         {
             RefreshAll();
@@ -1664,6 +1970,7 @@ namespace ZirisWorkshop
             if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
             Activate();
             BringToFront();
+            MaybeFirstRun();
         }
 
         void HideToTray()

@@ -1,8 +1,8 @@
 {
   "app": {
-    "version": "1.1.2",
-    "url": "app/ZirisWorkshop-1.1.2.exe",
-    "sha256": "830f916971631a7fc7c81d7e1d7e2ca53f7ffc7ee3cd771430c676f0133e0ce6"
+    "version": "1.1.3",
+    "url": "app/ZirisWorkshop-1.1.3.exe",
+    "sha256": "ed257a9573e894beb2fa47c7911c00bd0641e735f4c49be783f65df7bf9238fa"
   },
   "addons": [
     {
@@ -17,9 +17,9 @@
       "id": "FriendsCraft",
       "name": "FriendsCraft",
       "description": "Share professions, gold, recipes, bags and a shopping list with your friends.",
-      "version": "0.2.1",
-      "url": "addons/FriendsCraft-0.2.1.zip",
-      "sha256": "2a624e698726c6a8d7010f4e4f8b7476dfe615447ce066eefd6dc5d40521a7f5"
+      "version": "0.3.1",
+      "url": "addons/FriendsCraft-0.3.1.zip",
+      "sha256": "9933109e1200ad9a658ed9acbb2e1202ec197f6a85b6911d1a658da03feb42b8"
     },
     {
       "id": "FreshRanks",

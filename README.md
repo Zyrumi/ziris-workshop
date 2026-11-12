@@ -10,14 +10,16 @@ Switch on the addons you want, and new versions arrive by themselves.
 1. Download **[ZirisWorkshop.exe](https://github.com/Zyrumi/ziris-workshop/raw/main/app/ZirisWorkshop.exe)**.
 2. Run it. Windows may say "Windows protected your PC", because the app isn't signed.
    Click **More info**, then **Run anyway**.
-3. Switch on the addons you want. That's it.
+3. The first time, a small box shows the WoW Forever folder it found. Click **Looks good**,
+   or **Change...** to pick your World of Warcraft folder.
+4. Switch on the addons you want. That's it.
 
-It finds WoW Forever by itself. If it can't, click **Change...** and pick your
-World of Warcraft folder.
+The cog at the top opens these settings again later.
 
 ## What it does
 
 - Starts with Windows and sits in the tray, down by the clock. Click the icon to open it.
+  The cross at the top hides the window; it keeps running in the tray.
 - Checks for updates when it starts, every 3 hours, and shortly after you log out of WoW.
 - Downloads only from this repository, checks every download against its checksum,
   and unpacks it only into that addon's own folder.
@@ -31,7 +33,7 @@ Settings and a log live in `%LOCALAPPDATA%\ZirisWorkshop`.
 
 ## Remove it
 
-Open it, switch off **Start with Windows**, then right-click the tray icon and pick **Quit**.
+Open it, click the cog and switch off **Start with Windows**, then right-click the tray icon and pick **Quit**.
 Delete the `%LOCALAPPDATA%\ZirisWorkshop` folder and the "Ziri's Workshop" Start menu shortcut.
 Your addons stay where they are.
 
