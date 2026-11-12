@@ -148,7 +148,7 @@ namespace ZirisWorkshop
     static class Util
     {
         public const string AppName = "Ziri's Workshop";
-        public const string AppVersion = "1.1.1";
+        public const string AppVersion = "1.1.2";
         public const string RawBase = "https://raw.githubusercontent.com/Zyrumi/ziris-workshop/main/";
 
         static readonly object logLock = new object();
@@ -1179,6 +1179,7 @@ namespace ZirisWorkshop
     {
         bool on, hover;
         public event EventHandler CheckedChanged;
+        public int TextLeft = Theme.S(60); // where the words start, so they can line up with other rows
 
         public LeverSwitch(string text)
         {
@@ -1213,7 +1214,7 @@ namespace ZirisWorkshop
             var g = e.Graphics;
             var tr = new RectangleF(Theme.S(2), (Height - Theme.S(24)) / 2f, Theme.S(50), Theme.S(24));
             Theme.Toggle(g, tr, on, hover);
-            TextRenderer.DrawText(g, Text, Theme.Body, new Rectangle(Theme.S(60), 0, Width - Theme.S(60), Height), ForeColor,
+            TextRenderer.DrawText(g, Text, Theme.Body, new Rectangle(TextLeft, 0, Width - TextLeft, Height), ForeColor,
                 TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
             if (Focused && ShowFocusCues) Theme.FocusRing(g, new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f), 6 * Theme.K, Theme.BrassLight);
         }
@@ -1281,11 +1282,55 @@ namespace ZirisWorkshop
     }
 
     // The workbench along the bottom: dark wood-and-iron strip with a brass edge.
-    class Bench : TableLayoutPanel
+    // The dark workbench strip at the bottom. Its words are drawn straight onto it on one grid,
+    // so everything lines up; only the lever and buttons are real controls.
+    class Bench : Control
     {
-        public Bench()
+        public readonly BrassButton Change = new BrassButton("Change...");
+        public readonly BrassButton CheckNow = new BrassButton("Check now");
+        public readonly BrassButton HideButton = new BrassButton("Hide");
+        public readonly LeverSwitch StartSwitch = new LeverSwitch("Start with Windows (recommended, so updates arrive by themselves)");
+        string path = "", status = "";
+        readonly string version;
+
+        static int Pad { get { return Theme.S(18); } }
+        static int Row { get { return Theme.S(44); } }
+        static int Top0 { get { return Theme.S(14); } }          // below the brass edge
+        static int VersionRow { get { return Theme.S(22); } }
+
+        public Bench(string version)
         {
-            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.UserPaint, true);
+            this.version = "Version " + version;
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+            Height = Top0 + 3 * Row + VersionRow + Theme.S(8);
+            Controls.Add(Change);
+            Controls.Add(StartSwitch);
+            Controls.Add(CheckNow);
+            Controls.Add(HideButton);
+            AccessibleRole = AccessibleRole.Grouping;
+        }
+
+        public string PathText { set { if (value != path) { path = value ?? ""; AccessibleDescription = "WoW folder: " + path; Invalidate(); } } }
+        public string StatusText { set { if (value != status) { status = value ?? ""; AccessibleName = status; Invalidate(); } } }
+
+        // left column: the small "WoW folder" caption; path and lever words start right after it
+        int TextColumn
+        {
+            get { return Pad + Math.Max(TextRenderer.MeasureText("WoW folder", Theme.Tiny).Width + Theme.S(14), Theme.S(60)); }
+        }
+
+        int RowY(int row) { return Top0 + row * Row; }
+
+        protected override void OnLayout(LayoutEventArgs e)
+        {
+            base.OnLayout(e);
+            int right = Width - Pad;
+            int col = TextColumn;
+            Change.Location = new Point(right - Change.Width, RowY(0) + (Row - Change.Height) / 2);
+            StartSwitch.TextLeft = col - Pad;
+            StartSwitch.Bounds = new Rectangle(Pad, RowY(1) + (Row - StartSwitch.Height) / 2, Math.Max(10, right - Pad), StartSwitch.Height);
+            HideButton.Location = new Point(right - HideButton.Width, RowY(2) + (Row - HideButton.Height) / 2);
+            CheckNow.Location = new Point(HideButton.Left - Theme.S(10) - CheckNow.Width, HideButton.Top);
         }
 
         protected override void OnPaintBackground(PaintEventArgs e)
@@ -1299,14 +1344,36 @@ namespace ZirisWorkshop
                 return;
             }
             using (var b = new LinearGradientBrush(ClientRectangle, Theme.Bench1, Theme.Bench2, 90f)) g.FillRectangle(b, ClientRectangle);
-            // planks
-            using (var p = new Pen(Color.FromArgb(40, 0, 0, 0), k))
-                for (float y = 34 * k; y < Height; y += 34 * k) g.DrawLine(p, 0, y, Width, y);
+            // planks: seams between the rows, never through the words
+            using (var p = new Pen(Color.FromArgb(48, 0, 0, 0), k))
+            using (var hl = new Pen(Color.FromArgb(14, 255, 255, 255), k))
+                for (int row = 1; row <= 3; row++)
+                {
+                    int y = RowY(row);
+                    g.DrawLine(p, 0, y, Width, y);
+                    g.DrawLine(hl, 0, y + k, Width, y + k);
+                }
             using (var b = new LinearGradientBrush(new Rectangle(0, 0, Width, Theme.S(6)), Theme.BrassLight, Theme.BrassDark, 90f))
                 g.FillRectangle(b, 0, 0, Width, Theme.S(6));
             g.SmoothingMode = SmoothingMode.AntiAlias;
             Theme.Rivet(g, 12 * k, 3 * k, 4 * k);
             Theme.Rivet(g, Width - 12 * k, 3 * k, 4 * k);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            if (Width < Theme.S(100)) return;
+            var g = e.Graphics;
+            const TextFormatFlags Line = TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis;
+            int col = TextColumn;
+            // row 1: caption, path, [Change...]
+            TextRenderer.DrawText(g, "WoW folder", Theme.Tiny, new Rectangle(Pad, RowY(0), col - Pad, Row), Theme.CreamDim, Line);
+            TextRenderer.DrawText(g, path, Theme.Body, new Rectangle(col, RowY(0), Math.Max(10, Change.Left - Theme.S(12) - col), Row), Theme.Cream,
+                Line | TextFormatFlags.PathEllipsis);
+            // row 3: status, [Check now] [Hide]
+            TextRenderer.DrawText(g, status, Theme.Body, new Rectangle(Pad, RowY(2), Math.Max(10, CheckNow.Left - Theme.S(12) - Pad), Row), Theme.Cream, Line);
+            // version, small, at the bottom
+            TextRenderer.DrawText(g, version, Theme.Tiny, new Rectangle(Pad, RowY(3), Width - 2 * Pad, VersionRow), Theme.CreamDim, Line);
         }
     }
 
@@ -1316,9 +1383,7 @@ namespace ZirisWorkshop
         readonly NotifyIcon tray;
         readonly HeaderPlate header;
         readonly PaperFlow list;
-        readonly Label pathLabel;
-        readonly Label statusLabel;
-        readonly LeverSwitch startSwitch;
+        readonly Bench bench;
         readonly Dictionary<string, AddonCard> cards = new Dictionary<string, AddonCard>();
         readonly System.Windows.Forms.Timer every3h;
         readonly System.Windows.Forms.Timer firstCheck;
@@ -1354,44 +1419,17 @@ namespace ZirisWorkshop
             };
             list.Resize += (s, e) => FitCards();
 
-            var bench = new Bench { Dock = DockStyle.Bottom, AutoSize = true, ColumnCount = 3, Padding = new Padding(Theme.S(16), Theme.S(16), Theme.S(16), Theme.S(10)) };
-            bench.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            bench.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            bench.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-
-            bench.Controls.Add(new Label { Text = "WoW folder", AutoSize = true, Font = Theme.Tiny, ForeColor = Theme.CreamDim, BackColor = Color.Transparent, Anchor = AnchorStyles.Left, Margin = new Padding(0, Theme.S(10), Theme.S(8), 0) }, 0, 0);
-            pathLabel = new Label { AutoSize = false, AutoEllipsis = true, Anchor = AnchorStyles.Left | AnchorStyles.Right, Height = TextRenderer.MeasureText("Ag", Theme.Body).Height + Theme.S(2), TextAlign = ContentAlignment.MiddleLeft, ForeColor = Theme.Cream, BackColor = Color.Transparent };
-            bench.Controls.Add(pathLabel, 1, 0);
-            var change = new BrassButton("Change...") { Anchor = AnchorStyles.Right, Margin = new Padding(Theme.S(6), 0, 0, Theme.S(4)) };
-            change.Click += (s, e) => PickFolder();
-            bench.Controls.Add(change, 2, 0);
-
-            startSwitch = new LeverSwitch("Start with Windows (recommended, so updates arrive by themselves)") { Margin = new Padding(0, Theme.S(4), 0, Theme.S(4)) };
-            startSwitch.Checked = ws.Settings.StartWithWindows;
-            startSwitch.CheckedChanged += (s, e) =>
+            bench = new Bench(Util.AppVersion) { Dock = DockStyle.Bottom };
+            bench.Change.Click += (s, e) => PickFolder();
+            bench.StartSwitch.Checked = ws.Settings.StartWithWindows;
+            bench.StartSwitch.CheckedChanged += (s, e) =>
             {
-                ws.Settings.StartWithWindows = startSwitch.Checked;
+                ws.Settings.StartWithWindows = bench.StartSwitch.Checked;
                 ws.SaveSettings();
                 ws.ApplyStartWithWindows();
             };
-            bench.Controls.Add(startSwitch, 0, 1);
-            bench.SetColumnSpan(startSwitch, 3);
-
-            statusLabel = new Label { AutoSize = false, AutoEllipsis = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Theme.Cream, BackColor = Color.Transparent };
-            bench.Controls.Add(statusLabel, 0, 2);
-            bench.SetColumnSpan(statusLabel, 2);
-            var buttons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Anchor = AnchorStyles.Right, Margin = new Padding(0, Theme.S(4), 0, 0), BackColor = Color.Transparent };
-            var checkBtn = new BrassButton("Check now") { Margin = new Padding(Theme.S(6), 0, 0, 0) };
-            checkBtn.Click += (s, e) => RunCheck("button");
-            var hideBtn = new BrassButton("Hide") { Margin = new Padding(Theme.S(8), 0, 0, 0) };
-            hideBtn.Click += (s, e) => HideToTray();
-            buttons.Controls.Add(checkBtn);
-            buttons.Controls.Add(hideBtn);
-            bench.Controls.Add(buttons, 2, 2);
-
-            var version = new Label { Text = "Version " + Util.AppVersion, AutoSize = true, Font = Theme.Tiny, ForeColor = Theme.CreamDim, BackColor = Color.Transparent, Margin = new Padding(0, Theme.S(6), 0, 0) };
-            bench.Controls.Add(version, 0, 3);
-            bench.SetColumnSpan(version, 3);
+            bench.CheckNow.Click += (s, e) => RunCheck("button");
+            bench.HideButton.Click += (s, e) => HideToTray();
 
             Controls.Add(list);
             Controls.Add(bench);
@@ -1494,8 +1532,8 @@ namespace ZirisWorkshop
 
         void RefreshAll()
         {
-            pathLabel.Text = ws.Settings.ForeverPath ?? "not found yet";
-            statusLabel.Text = ws.Status;
+            bench.PathText = ws.Settings.ForeverPath ?? "not found yet";
+            bench.StatusText = ws.Status;
             var m = ws.Manifest;
             if (m == null || m.addons == null)
             {

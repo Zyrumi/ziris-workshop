@@ -1,8 +1,8 @@
 {
   "app": {
-    "version": "1.1.1",
-    "url": "app/ZirisWorkshop-1.1.1.exe",
-    "sha256": "792a314f33fd7ad0bffe40a905747917cbe8ac5e49457517b629a1a23c6e0d4d"
+    "version": "1.1.2",
+    "url": "app/ZirisWorkshop-1.1.2.exe",
+    "sha256": "830f916971631a7fc7c81d7e1d7e2ca53f7ffc7ee3cd771430c676f0133e0ce6"
   },
   "addons": [
     {
@@ -25,9 +25,9 @@
       "id": "FreshRanks",
       "name": "Fresh Ranks",
       "description": "Puts newly learned spell ranks and new spells on your action bars.",
-      "version": "1.0.0",
-      "url": "addons/FreshRanks-1.0.0.zip",
-      "sha256": "b135c1f75a8d0a5003850d9598dd09c201b3b687fba60863009c9c4ae393b8bd"
+      "version": "1.0.1",
+      "url": "addons/FreshRanks-1.0.1.zip",
+      "sha256": "0e078b702cad764f07c3ad218a3289f42d57980dee558b028d1fe056ed802474"
     }
   ]
 }
