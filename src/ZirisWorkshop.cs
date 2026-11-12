@@ -148,7 +148,7 @@ namespace ZirisWorkshop
     static class Util
     {
         public const string AppName = "Ziri's Workshop";
-        public const string AppVersion = "1.1.0";
+        public const string AppVersion = "1.1.1";
         public const string RawBase = "https://raw.githubusercontent.com/Zyrumi/ziris-workshop/main/";
 
         static readonly object logLock = new object();
@@ -914,6 +914,7 @@ namespace ZirisWorkshop
 
         protected override void OnPaint(PaintEventArgs e)
         {
+            if (Width < Theme.S(60) || Height < Theme.S(30)) return; // not laid out yet
             var g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
             Theme.PaperGrid(g, ClientRectangle, 0);
@@ -957,6 +958,7 @@ namespace ZirisWorkshop
 
         protected override void OnPaintBackground(PaintEventArgs e)
         {
+            if (Width < 1 || Height < 1) return;
             var g = e.Graphics;
             Theme.PaperGrid(g, ClientRectangle, Top);
             g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -1058,6 +1060,7 @@ namespace ZirisWorkshop
             g.SmoothingMode = SmoothingMode.AntiAlias;
             float k = Theme.K;
             var r = new RectangleF(2 * k, 2 * k, Width - 6 * k, Height - 8 * k);
+            if (r.Width < 30 * k || r.Height < 20 * k) return; // not laid out yet
 
             using (var shadow = Theme.Round(new RectangleF(r.X + k, r.Y + 4 * k, r.Width, r.Height), 12 * k))
             using (var b = new SolidBrush(Color.FromArgb(46, 110, 80, 40))) g.FillPath(b, shadow);
@@ -1254,6 +1257,7 @@ namespace ZirisWorkshop
             float k = Theme.K;
             float off = down ? k : 0;
             var r = new RectangleF(k, k + off, Width - 3 * k, Height - 4 * k);
+            if (r.Width < 4 * k || r.Height < 4 * k) return;
             using (var shadow = Theme.Round(new RectangleF(r.X, r.Y + 2 * k - off, r.Width, r.Height), 9 * k))
             using (var b = new SolidBrush(Color.FromArgb(90, 0, 0, 0))) g.FillPath(b, shadow);
             using (var path = Theme.Round(r, 9 * k))
@@ -1288,6 +1292,12 @@ namespace ZirisWorkshop
         {
             var g = e.Graphics;
             float k = Theme.K;
+            // Windows can ask for a paint before the strip has a size; a gradient over nothing throws.
+            if (Width < Theme.S(30) || Height < Theme.S(8))
+            {
+                using (var b = new SolidBrush(Theme.Bench2)) g.FillRectangle(b, ClientRectangle);
+                return;
+            }
             using (var b = new LinearGradientBrush(ClientRectangle, Theme.Bench1, Theme.Bench2, 90f)) g.FillRectangle(b, ClientRectangle);
             // planks
             using (var p = new Pen(Color.FromArgb(40, 0, 0, 0), k))
@@ -1712,6 +1722,9 @@ namespace ZirisWorkshop
                     if (InstallSelf()) return 0;
                 }
 
+                // A drawing hiccup should never put a scary dialog in front of a friend: log it and carry on.
+                Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+                Application.ThreadException += (s, e) => Util.Log("ui error: " + e.Exception);
                 try { SetProcessDPIAware(); } catch { }
                 using (var screen = Graphics.FromHwnd(IntPtr.Zero)) Theme.Init(screen.DpiX);
                 Application.EnableVisualStyles();
