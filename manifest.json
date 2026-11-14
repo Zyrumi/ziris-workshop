@@ -1,33 +1,29 @@
 {
   "app": {
-    "version": "1.1.5",
-    "url": "app/ZirisWorkshop-1.1.5.exe",
-    "sha256": "da658f8d93ab5d1aeb1e09fd32845a515808ad4fd37335e4a2ff808180f2602f"
+    "version": "1.2.0",
+    "url": "app/ZirisWorkshop-1.2.0.exe",
+    "sha256": "125a078e38ab6282953142dc094849d16726a6d2d53f496ff883e0c22ac3ab0e"
   },
   "addons": [
     {
-      "id": "LootHighlight",
-      "name": "Loot Highlight",
-      "description": "Points out nearby herbs, ore, chests, quest objects and lootable corpses.",
-      "version": "2.9.2",
-      "url": "addons/LootHighlight-2.9.2.zip",
-      "sha256": "b65502c3fa7ea886aec80cd73995939ebf6ccbd8d6fc8cf2818a8b0c69a17c52"
+      "id": "ZirisToolkit",
+      "name": "Ziri's Toolkit",
+      "description": "Small helpers in one addon: Loot Highlight, Fresh Ranks, cleanse buttons, thanking people who buff you, an undress button, boat times, a tidier friends list, an instance limit counter, rested XP per character and buff reminders.",
+      "version": "1.0.0",
+      "url": "addons/ZirisToolkit-1.0.0.zip",
+      "sha256": "9cca89e7e1ea2ef73b45ad6c6b4ba2f1017972be631f7499d9e88bc4dd079af6",
+      "replaces": [
+        "LootHighlight",
+        "FreshRanks"
+      ]
     },
     {
       "id": "FriendsCraft",
       "name": "FriendsCraft",
       "description": "Share professions, gold, recipes, bags and a shopping list with your friends.",
-      "version": "0.3.1",
-      "url": "addons/FriendsCraft-0.3.1.zip",
-      "sha256": "9933109e1200ad9a658ed9acbb2e1202ec197f6a85b6911d1a658da03feb42b8"
-    },
-    {
-      "id": "FreshRanks",
-      "name": "Fresh Ranks",
-      "description": "Puts newly learned spell ranks and new spells on your action bars.",
-      "version": "1.0.1",
-      "url": "addons/FreshRanks-1.0.1.zip",
-      "sha256": "0e078b702cad764f07c3ad218a3289f42d57980dee558b028d1fe056ed802474"
+      "version": "0.3.3",
+      "url": "addons/FriendsCraft-0.3.3.zip",
+      "sha256": "222580883840ecb224fe217f9d0600da352fcb49db50e7a9c3fc7461ee3f28d8"
     }
   ]
 }

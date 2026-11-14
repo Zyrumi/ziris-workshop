@@ -1,5 +1,4 @@
 [
-  { "id": "LootHighlight", "source": "G:/Claude/LootHighlight" },
-  { "id": "FriendsCraft", "source": "G:/Claude/FriendsCraft" },
-  { "id": "FreshRanks", "source": "G:/Claude/FreshRanks" }
+  { "id": "ZirisToolkit", "source": "G:/Claude/ZirisToolkit", "replaces": ["LootHighlight", "FreshRanks"] },
+  { "id": "FriendsCraft", "source": "G:/Claude/FriendsCraft" }
 ]

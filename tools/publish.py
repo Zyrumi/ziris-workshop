@@ -8,6 +8,9 @@ Run from the repo folder:
 
 Name and description of each addon come from its .toc (## Title, ## Notes)
 unless addons.json gives "name" / "description".
+"replaces": ["OldId", ...] in addons.json switches this addon on for everyone
+who had one of the old ones; the app retires the old folders (Recycle Bin)
+and carries their saved settings over. Drop the old ones from addons.json.
 A changed addon needs a new ## Version in its .toc; an unchanged one keeps
 its old zip, so friends only download what really changed.
 """
@@ -127,8 +130,11 @@ def main():
         if state == "new":
             with open(path, "wb") as f:
                 f.write(data)
-        manifest["addons"].append({"id": aid, "name": name, "description": desc, "version": version,
-                                   "url": rel, "sha256": sha256(data)})
+        item = {"id": aid, "name": name, "description": desc, "version": version,
+                "url": rel, "sha256": sha256(data)}
+        if entry.get("replaces"):
+            item["replaces"] = list(entry["replaces"])
+        manifest["addons"].append(item)
         print("  %-14s %-8s %s" % (aid, version, state))
 
     with open(os.path.join(out, "manifest.json"), "w", encoding="utf-8", newline="\n") as f:

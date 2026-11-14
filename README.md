@@ -26,6 +26,9 @@ The cog at the top opens these settings again later.
 - Switching an addon off moves its folder to the Recycle Bin. Switch it on again to get it back.
 - Updates itself the same way, so you never need a new copy.
 - New addons show up in the list by themselves.
+- When one addon replaces older ones (Ziri's Toolkit replaces Loot Highlight and Fresh Ranks),
+  everyone who had an old one gets the new one. The old folders go to the Recycle Bin and
+  their saved settings come along.
 
 After an update, restart WoW to use the new version.
 
@@ -44,6 +47,7 @@ Your addons stay where they are.
 3. Check `git status`, then commit and push. Friends get it within 3 hours, or after they next log out of WoW.
 
 - New addon: add it to `addons.json`.
+- Addon that replaces others: give it `"replaces": ["OldId"]` in `addons.json` and remove the old ones there.
 - App change: bump `AppVersion` in `src/ZirisWorkshop.cs`, then publish.
 - Icon: `python tools/make_icon.py --from drawing.png` (PNG with a transparent background), then publish.
 - Build only: `build.cmd` (uses the C# compiler that comes with Windows).

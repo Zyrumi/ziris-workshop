@@ -9,6 +9,10 @@
 //   - checks when it starts, every 3 hours, and shortly after WoW saves an
 //     addon's settings (that happens when you log out or /reload)
 //   - updates itself from the same manifest
+//   - an addon that "replaces" older ones (Ziri's Toolkit replaces Loot
+//     Highlight and Fresh Ranks) is switched on for everyone who had one of
+//     them; the old folders go to the Recycle Bin and their saved settings
+//     are carried over
 //
 // Everything is downloaded from one hard-coded GitHub repo, checked against
 // the SHA-256 in the manifest, and unpacked only into that addon's folder.
@@ -55,6 +59,7 @@ namespace ZirisWorkshop
         public string version { get; set; }
         public string url { get; set; }
         public string sha256 { get; set; }
+        public List<string> replaces { get; set; } // older addons this one takes over from
     }
 
     public class AppInfo
@@ -78,10 +83,12 @@ namespace ZirisWorkshop
         public bool FirstCheckDone { get; set; }
         public bool TrayHintShown { get; set; }
         public bool SetupDone { get; set; }      // the settings box was seen once
+        public Dictionary<string, string> Retire { get; set; } // old addon id -> the addon replacing it
 
         public Settings()
         {
             Wanted = new Dictionary<string, bool>();
+            Retire = new Dictionary<string, string>();
             StartWithWindows = true;
         }
     }
@@ -151,7 +158,7 @@ namespace ZirisWorkshop
     static class Util
     {
         public const string AppName = "Ziri's Workshop";
-        public const string AppVersion = "1.1.5";
+        public const string AppVersion = "1.2.0";
         public const string RawBase = "https://raw.githubusercontent.com/Zyrumi/ziris-workshop/main/";
 
         static readonly object logLock = new object();
@@ -317,6 +324,7 @@ namespace ZirisWorkshop
                     if (s != null)
                     {
                         if (s.Wanted == null) s.Wanted = new Dictionary<string, bool>();
+                        if (s.Retire == null) s.Retire = new Dictionary<string, string>();
                         return s;
                     }
                 }
@@ -486,6 +494,7 @@ namespace ZirisWorkshop
 
             var updated = new List<string>();
             var fresh = new List<string>();
+            foreach (var a in m.addons) TakeOverLocked(a);
             foreach (var a in m.addons)
             {
                 string have = InstalledVersion(a.id);
@@ -501,6 +510,7 @@ namespace ZirisWorkshop
                 }
             }
             Settings.FirstCheckDone = true;
+            RetireLocked();
             SaveSettings();
 
             SetStatus("Last checked " + DateTime.Now.ToString("HH:mm") + ".");
@@ -597,6 +607,93 @@ namespace ZirisWorkshop
                 Notes[a.id] = "Couldn't install " + a.version + ": " + why;
                 Raise();
                 return false;
+            }
+        }
+
+        // ---------------- Replacing older addons ----------------
+
+        static List<string> Replaces(AddonInfo a)
+        {
+            if (a.replaces == null) return new List<string>();
+            return a.replaces.Where(r => Util.SafeId(r) && r != a.id).Distinct().ToList();
+        }
+
+        // Someone who had one of the addons this one replaces gets this one
+        // switched on, and the old ones are queued to be retired.
+        void TakeOverLocked(AddonInfo a)
+        {
+            var had = Replaces(a).Where(r => IsWanted(r)
+                || (!Settings.Wanted.ContainsKey(r) && InstalledVersion(r) != null)).ToList();
+            if (had.Count == 0) return;
+            Settings.Wanted[a.id] = true;
+            foreach (string r in had)
+            {
+                Settings.Wanted[r] = false;
+                Settings.Retire[r] = a.id;
+            }
+            Util.Log(a.id + " takes over from " + string.Join(", ", had));
+        }
+
+        // Once the replacement is installed: carry the old saved settings
+        // over, then the old folder goes to the Recycle Bin.
+        void RetireLocked()
+        {
+            if (AddOnsDir == null || Settings.Retire.Count == 0) return;
+            foreach (var kv in Settings.Retire.ToList())
+            {
+                string old = kv.Key, by = kv.Value;
+                if (!Util.SafeId(old) || !Util.SafeId(by)) { Settings.Retire.Remove(old); continue; }
+                if (InstalledVersion(by) == null) continue; // wait until it is in place
+                try
+                {
+                    CarrySaves(old, by);
+                    string target = Path.Combine(AddOnsDir, old);
+                    if (Directory.Exists(target))
+                        Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(target,
+                            Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                            Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+                    Settings.Retire.Remove(old);
+                    Settings.Wanted.Remove(old);
+                    Util.Log("retired " + old + " (replaced by " + by + ", folder to the Recycle Bin)");
+                }
+                catch (Exception e)
+                {
+                    Util.Log("retire " + old + " failed: " + e);
+                }
+            }
+            Raise();
+        }
+
+        // WoW keeps an addon's settings in WTF\Account\...\SavedVariables\<id>.lua
+        // (also per realm and character). Where the new addon declares the
+        // same saved variables, the old file is appended to the new one, unless
+        // the new one already has them.
+        public void CarrySaves(string old, string by)
+        {
+            string wtf = Path.Combine(Settings.ForeverPath, "WTF", "Account");
+            if (!Directory.Exists(wtf)) return;
+            string toc = Path.Combine(AddOnsDir, by, by + ".toc");
+            var declared = new HashSet<string>();
+            foreach (string key in new[] { "SavedVariables", "SavedVariablesPerCharacter" })
+                foreach (string v in (Util.TocValue(toc, key) ?? "").Split(','))
+                    if (v.Trim().Length > 0) declared.Add(v.Trim());
+            if (declared.Count == 0) return;
+
+            var assigned = new Regex(@"^([A-Za-z_][A-Za-z0-9_]*)\s*=", RegexOptions.Multiline);
+            foreach (string file in Directory.EnumerateFiles(wtf, old + ".lua", SearchOption.AllDirectories))
+            {
+                string dir = Path.GetDirectoryName(file);
+                if (!string.Equals(Path.GetFileName(dir), "SavedVariables", StringComparison.OrdinalIgnoreCase)) continue;
+                string text = File.ReadAllText(file);
+                var carry = assigned.Matches(text).Cast<Match>().Select(x => x.Groups[1].Value)
+                    .Where(v => declared.Contains(v)).ToList();
+                if (carry.Count == 0) continue;
+                string target = Path.Combine(dir, by + ".lua");
+                string have = File.Exists(target) ? File.ReadAllText(target) : "";
+                if (assigned.Matches(have).Cast<Match>().Any(x => carry.Contains(x.Groups[1].Value))) continue;
+                if (have.Length > 0 && !have.EndsWith("\n")) have += "\r\n";
+                File.WriteAllText(target, have + text);
+                Util.Log("carried " + string.Join(", ", carry) + " from " + file + " to " + by + ".lua");
             }
         }
 
