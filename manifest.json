@@ -1,8 +1,8 @@
 {
   "app": {
-    "version": "1.2.0",
-    "url": "app/ZirisWorkshop-1.2.0.exe",
-    "sha256": "125a078e38ab6282953142dc094849d16726a6d2d53f496ff883e0c22ac3ab0e"
+    "version": "1.2.1",
+    "url": "app/ZirisWorkshop-1.2.1.exe",
+    "sha256": "beea5d0e376a8aeca4a9535e1ec6aa732c159c45293436b2c0339f1716288678"
   },
   "addons": [
     {

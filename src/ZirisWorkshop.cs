@@ -1023,7 +1023,7 @@ namespace ZirisWorkshop
         {
             this.icon = icon;
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
-            Height = Theme.S(118);
+            Height = Theme.S(108);
             Controls.Add(SettingsButton);
             Controls.Add(HideButton);
             spin = new System.Windows.Forms.Timer { Interval = 33 };
@@ -1077,19 +1077,6 @@ namespace ZirisWorkshop
             var sub = new Rectangle(tx + Theme.S(2), Theme.S(20) + titleSize.Height, Math.Max(80, Width - tx - Theme.S(128)), Theme.S(42));
             TextRenderer.DrawText(g, "Switch on the addons you want. They stay up to date by themselves.", Theme.Body, sub, Theme.InkMid,
                 TextFormatFlags.WordBreak | TextFormatFlags.NoPadding);
-
-            // brass pipe along the bottom, bolted down
-            float py = Height - 11 * k;
-            var pipe = new RectangleF(12 * k, py - 4 * k, Width - 24 * k, 8 * k);
-            if (pipe.Width < 20 * k) return;
-            using (var path = Theme.Round(pipe, 4 * k))
-            using (var b = new LinearGradientBrush(new RectangleF(pipe.X, pipe.Y - 1, pipe.Width, pipe.Height + 2), Theme.BrassLight, Theme.BrassDark, 90f))
-            {
-                g.FillPath(b, path);
-                using (var p = new Pen(Theme.BrassDark, k)) g.DrawPath(p, path);
-            }
-            foreach (float x in new[] { pipe.X + 8 * k, pipe.X + pipe.Width / 3, pipe.X + pipe.Width * 2 / 3, pipe.Right - 8 * k })
-                Theme.Rivet(g, x, py, 5.5f * k);
         }
     }
 
