@@ -158,7 +158,7 @@ namespace ZirisWorkshop
     static class Util
     {
         public const string AppName = "Ziri's Workshop";
-        public const string AppVersion = "1.2.0";
+        public const string AppVersion = "1.2.1";
         public const string RawBase = "https://raw.githubusercontent.com/Zyrumi/ziris-workshop/main/";
 
         static readonly object logLock = new object();
@@ -1709,6 +1709,9 @@ namespace ZirisWorkshop
             Padding = new Padding(Math.Max(1, Theme.S(1)));
             var work = Screen.PrimaryScreen.WorkingArea;
             ClientSize = new Size(Math.Min(Theme.S(600), work.Width - 40), Math.Min(Theme.S(460), work.Height - 60));
+            // Windows sometimes squeezed the window to a sliver (seen at 2 px
+            // wide, likely when screens sleep or wake); never smaller than this.
+            MinimumSize = new Size(Math.Min(Theme.S(420), work.Width - 40), Math.Min(Theme.S(240), work.Height - 60));
             StartPosition = FormStartPosition.CenterScreen;
             Icon = LoadIcon(32);
             DoubleBuffered = true;
@@ -2046,9 +2049,31 @@ namespace ZirisWorkshop
         {
             Show();
             if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+            RescueBounds();
             Activate();
             BringToFront();
             MaybeFirstRun();
+        }
+
+        // Back to the normal width, and onto a screen, if Windows squeezed or
+        // moved the window while it was away.
+        void RescueBounds()
+        {
+            var work = Screen.FromControl(this).WorkingArea;
+            int wantW = Math.Min(Theme.S(600), work.Width - 40);
+            bool squeezed = ClientSize.Width < wantW - 2 || Height < Theme.S(200);
+            bool offScreen = !Screen.AllScreens.Any(sc => sc.WorkingArea.IntersectsWith(Bounds));
+            if (squeezed)
+            {
+                Util.Log("window was squeezed to " + Width + "x" + Height + "; put back");
+                ClientSize = new Size(wantW, Math.Max(ClientSize.Height, Theme.S(300)));
+                FitWindow();
+            }
+            if (squeezed || offScreen)
+            {
+                var area = Screen.FromPoint(Cursor.Position).WorkingArea;
+                Location = new Point(area.Left + (area.Width - Width) / 2, area.Top + Math.Max(0, (area.Height - Height) / 2));
+            }
         }
 
         void HideToTray()
