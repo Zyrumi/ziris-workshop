@@ -21,9 +21,9 @@
       "id": "FriendsCraft",
       "name": "FriendsCraft",
       "description": "Share professions, gold, recipes, bags and a shopping list with your friends.",
-      "version": "0.3.3",
-      "url": "addons/FriendsCraft-0.3.3.zip",
-      "sha256": "222580883840ecb224fe217f9d0600da352fcb49db50e7a9c3fc7461ee3f28d8"
+      "version": "0.5.0",
+      "url": "addons/FriendsCraft-0.5.0.zip",
+      "sha256": "f219779e9f67ab9f9882c4bbaacadb2321e746c3e85cca072749a1607def9b3c"
     }
   ]
 }
