@@ -24,7 +24,7 @@ The cog at the top opens these settings again later.
 - Downloads only from this repository, checks every download against its checksum,
   and unpacks it only into that addon's own folder.
 - Switching an addon off moves its folder to the Recycle Bin. Switch it on again to get it back.
-- Updates itself the same way, so you never need a new copy.
+- Updates itself the same way, so you never need a new copy. If a new version does not start, the previous one is put back.
 - New addons show up in the list by themselves.
 - When one addon replaces older ones (Ziri's Toolkit replaces Loot Highlight and Fresh Ranks),
   everyone who had an old one gets the new one. The old folders go to the Recycle Bin and
@@ -48,6 +48,7 @@ Your addons stay where they are.
 
 - New addon: add it to `addons.json`.
 - Addon that replaces others: give it `"replaces": ["OldId"]` in `addons.json` and remove the old ones there.
-- App change: bump `AppVersion` in `src/ZirisWorkshop.cs`, then publish.
+- App change: bump `AppVersion` and `AssemblyVersion` in `src/ZirisWorkshop.cs`, then publish.
+- Publishing keeps the newest two versions of the app and of each addon in the repo and removes older files (git history still has them).
 - Icon: `python tools/make_icon.py --from drawing.png` (PNG with a transparent background), then publish.
 - Build only: `build.cmd` (uses the C# compiler that comes with Windows).

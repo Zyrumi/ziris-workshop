@@ -68,6 +68,37 @@ def make_zip(addon_id, src):
     return buf.getvalue()
 
 
+def version_key(name):
+    return [int(n) for n in re.findall(r"\d+", name)]
+
+
+def prune(out, manifest):
+    """Keeps the newest two versions of the app and of each listed addon
+    (the one before stays for anyone whose copy of the list is a few minutes
+    old) and removes the rest. Git history still has them."""
+    keep = {"ZirisWorkshop.exe"}
+    groups = {"app": {"ZirisWorkshop": []}, "addons": {a["id"]: [] for a in manifest["addons"]}}
+    removed = []
+    for folder, ids in groups.items():
+        base = os.path.join(out, folder)
+        for name in sorted(os.listdir(base)):
+            m = re.match(r"(.+)-(\d[\d.]*)\.(exe|zip)$", name)
+            if name in keep:
+                continue
+            if m and m.group(1) in ids:
+                ids[m.group(1)].append(name)
+            else:
+                os.remove(os.path.join(base, name))
+                removed.append(folder + "/" + name)
+        for names in ids.values():
+            names.sort(key=version_key)
+            for name in names[:-2]:
+                os.remove(os.path.join(base, name))
+                removed.append(folder + "/" + name)
+    if removed:
+        print("removed old files: " + ", ".join(removed))
+
+
 def check_text(label, text):
     if text and "—" in text:
         sys.exit(label + " contains an em dash; please reword it")
@@ -88,6 +119,10 @@ def main():
 
     src_text = open(os.path.join(ROOT, "src", "ZirisWorkshop.cs"), encoding="utf-8").read()
     app_version = re.search(r'AppVersion = "([^"]+)"', src_text).group(1)
+    asm_version = re.search(r'AssemblyVersion\("([^"]+)"\)', src_text).group(1)
+    if asm_version != app_version + ".0":
+        sys.exit("AssemblyVersion is %s but AppVersion is %s; make them match in src/ZirisWorkshop.cs"
+                 % (asm_version, app_version))
     exe = open(os.path.join(ROOT, "app", "ZirisWorkshop.exe"), "rb").read()
 
     os.makedirs(os.path.join(out, "app"), exist_ok=True)
@@ -101,6 +136,10 @@ def main():
     else:
         with open(app_path, "wb") as f:
             f.write(exe)
+    # The file friends download must really be that version, or their copy
+    # would update again and again.
+    if ("ZirisWorkshop/" + app_version).encode("utf-16-le") not in exe:
+        sys.exit("app/ZirisWorkshop.exe is not version " + app_version + ". Run without --no-build.")
     if os.path.abspath(out) != ROOT:
         shutil.copyfile(os.path.join(ROOT, "app", "ZirisWorkshop.exe"), os.path.join(out, "app", "ZirisWorkshop.exe"))
 
@@ -140,6 +179,7 @@ def main():
     with open(os.path.join(out, "manifest.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(manifest, f, indent=2)
         f.write("\n")
+    prune(out, manifest)
     print("app " + app_version + ", manifest written to " + out)
     print("Nothing is pushed. Check `git status`, then commit and push when ready.")
 

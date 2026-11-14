@@ -43,7 +43,7 @@ using Microsoft.Win32;
 [assembly: TargetFramework(".NETFramework,Version=v4.8", FrameworkDisplayName = ".NET Framework 4.8")]
 [assembly: System.Reflection.AssemblyTitle("Ziri's Workshop")]
 [assembly: System.Reflection.AssemblyProduct("Ziri's Workshop")]
-[assembly: System.Reflection.AssemblyVersion("1.1.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.2.2.0")]
 
 namespace ZirisWorkshop
 {
@@ -84,6 +84,7 @@ namespace ZirisWorkshop
         public bool TrayHintShown { get; set; }
         public bool SetupDone { get; set; }      // the settings box was seen once
         public Dictionary<string, string> Retire { get; set; } // old addon id -> the addon replacing it
+        public string UpdateTried { get; set; }  // app version we already updated to once (stops update loops)
 
         public Settings()
         {
@@ -158,7 +159,7 @@ namespace ZirisWorkshop
     static class Util
     {
         public const string AppName = "Ziri's Workshop";
-        public const string AppVersion = "1.2.1";
+        public const string AppVersion = "1.2.2"; // keep AssemblyVersion above the same
         public const string RawBase = "https://raw.githubusercontent.com/Zyrumi/ziris-workshop/main/";
 
         static readonly object logLock = new object();
@@ -303,6 +304,11 @@ namespace ZirisWorkshop
         public event Action ExitForUpdate;
 
         readonly object runLock = new object();
+        // Settings are read and changed by the window and by background
+        // checks: every change and every save holds this lock.
+        readonly object settingsLock = new object();
+        readonly object timerLock = new object();
+        public volatile bool LastCheckFailed; // the last check could not reach GitHub (or broke)
         FileSystemWatcher watcher;
         System.Threading.Timer saveTimer;
         string settingsPath;
@@ -337,11 +343,15 @@ namespace ZirisWorkshop
         {
             try
             {
-                Directory.CreateDirectory(Util.DataDir);
-                string tmp = settingsPath + ".tmp";
-                File.WriteAllText(tmp, new JavaScriptSerializer().Serialize(Settings));
-                if (File.Exists(settingsPath)) File.Delete(settingsPath);
-                File.Move(tmp, settingsPath);
+                lock (settingsLock)
+                {
+                    Directory.CreateDirectory(Util.DataDir);
+                    string tmp = settingsPath + ".tmp";
+                    File.WriteAllText(tmp, new JavaScriptSerializer().Serialize(Settings));
+                    // Swapped in one step, so a crash never leaves us without settings.
+                    if (File.Exists(settingsPath)) File.Replace(tmp, settingsPath, null);
+                    else File.Move(tmp, settingsPath);
+                }
             }
             catch (Exception e) { Util.Log("could not save settings: " + e.Message); }
         }
@@ -432,8 +442,25 @@ namespace ZirisWorkshop
 
         public bool IsWanted(string id)
         {
-            bool w;
-            return Settings.Wanted.TryGetValue(id, out w) && w;
+            lock (settingsLock)
+            {
+                bool w;
+                return Settings.Wanted.TryGetValue(id, out w) && w;
+            }
+        }
+
+        // Switches an addon on or off and saves that.
+        public void SetWanted(string id, bool wanted)
+        {
+            lock (settingsLock) { Settings.Wanted[id] = wanted; }
+            SaveSettings();
+        }
+
+        // Changes settings from the window (the settings box) and saves them.
+        public void ChangeSettings(Action<Settings> change)
+        {
+            lock (settingsLock) { change(Settings); }
+            SaveSettings();
         }
 
         public AddonInfo Find(string id)
@@ -449,9 +476,11 @@ namespace ZirisWorkshop
         {
             lock (runLock)
             {
+                LastCheckFailed = false;
                 try { CheckLocked(why); }
                 catch (Exception e)
                 {
+                    LastCheckFailed = true;
                     Util.Log("check failed: " + e);
                     SetStatus("Something went wrong. Will try again later.");
                 }
@@ -465,7 +494,8 @@ namespace ZirisWorkshop
 
             if (Settings.ForeverPath == null || !Directory.Exists(Settings.ForeverPath))
             {
-                Settings.ForeverPath = FindForever();
+                string found = FindForever();
+                lock (settingsLock) { Settings.ForeverPath = found; }
                 SaveSettings();
                 WatchSaves();
             }
@@ -485,7 +515,8 @@ namespace ZirisWorkshop
             catch (Exception e)
             {
                 Util.Log("manifest: " + e.Message);
-                SetStatus("Can't reach GitHub right now. Will try again later.");
+                LastCheckFailed = true;
+                SetStatus("Can't reach GitHub right now. Will try again soon.");
                 return;
             }
             m.addons = m.addons.Where(a => a != null && Util.SafeId(a.id)).ToList();
@@ -498,18 +529,21 @@ namespace ZirisWorkshop
             foreach (var a in m.addons)
             {
                 string have = InstalledVersion(a.id);
-                if (!Settings.Wanted.ContainsKey(a.id))
+                lock (settingsLock)
                 {
-                    // first time we see this addon: keep it if it is already installed
-                    Settings.Wanted[a.id] = have != null;
-                    if (have == null && Settings.FirstCheckDone) fresh.Add(a.name ?? a.id);
+                    if (!Settings.Wanted.ContainsKey(a.id))
+                    {
+                        // first time we see this addon: keep it if it is already installed
+                        Settings.Wanted[a.id] = have != null;
+                        if (have == null && Settings.FirstCheckDone) fresh.Add(a.name ?? a.id);
+                    }
                 }
                 if (IsWanted(a.id) && (have == null || Util.Newer(a.version, have)))
                 {
                     if (InstallLocked(a)) updated.Add((a.name ?? a.id) + " " + a.version);
                 }
             }
-            Settings.FirstCheckDone = true;
+            lock (settingsLock) { Settings.FirstCheckDone = true; }
             RetireLocked();
             SaveSettings();
 
@@ -526,6 +560,8 @@ namespace ZirisWorkshop
         {
             lock (runLock)
             {
+                // Switched off again while this was waiting its turn: nothing to do.
+                if (!IsWanted(id)) return;
                 var a = Find(id);
                 if (a == null) { CheckLocked("ticked " + id); return; }
                 if (InstallLocked(a))
@@ -622,14 +658,18 @@ namespace ZirisWorkshop
         // switched on, and the old ones are queued to be retired.
         void TakeOverLocked(AddonInfo a)
         {
-            var had = Replaces(a).Where(r => IsWanted(r)
-                || (!Settings.Wanted.ContainsKey(r) && InstalledVersion(r) != null)).ToList();
-            if (had.Count == 0) return;
-            Settings.Wanted[a.id] = true;
-            foreach (string r in had)
+            List<string> had;
+            lock (settingsLock)
             {
-                Settings.Wanted[r] = false;
-                Settings.Retire[r] = a.id;
+                had = Replaces(a).Where(r => IsWanted(r)
+                    || (!Settings.Wanted.ContainsKey(r) && InstalledVersion(r) != null)).ToList();
+                if (had.Count == 0) return;
+                Settings.Wanted[a.id] = true;
+                foreach (string r in had)
+                {
+                    Settings.Wanted[r] = false;
+                    Settings.Retire[r] = a.id;
+                }
             }
             Util.Log(a.id + " takes over from " + string.Join(", ", had));
         }
@@ -638,11 +678,17 @@ namespace ZirisWorkshop
         // over, then the old folder goes to the Recycle Bin.
         void RetireLocked()
         {
-            if (AddOnsDir == null || Settings.Retire.Count == 0) return;
-            foreach (var kv in Settings.Retire.ToList())
+            List<KeyValuePair<string, string>> waiting;
+            lock (settingsLock) { waiting = Settings.Retire.ToList(); }
+            if (AddOnsDir == null || waiting.Count == 0) return;
+            foreach (var kv in waiting)
             {
                 string old = kv.Key, by = kv.Value;
-                if (!Util.SafeId(old) || !Util.SafeId(by)) { Settings.Retire.Remove(old); continue; }
+                if (!Util.SafeId(old) || !Util.SafeId(by))
+                {
+                    lock (settingsLock) { Settings.Retire.Remove(old); }
+                    continue;
+                }
                 if (InstalledVersion(by) == null) continue; // wait until it is in place
                 try
                 {
@@ -652,8 +698,11 @@ namespace ZirisWorkshop
                         Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(target,
                             Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
                             Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
-                    Settings.Retire.Remove(old);
-                    Settings.Wanted.Remove(old);
+                    lock (settingsLock)
+                    {
+                        Settings.Retire.Remove(old);
+                        Settings.Wanted.Remove(old);
+                    }
                     Util.Log("retired " + old + " (replaced by " + by + ", folder to the Recycle Bin)");
                 }
                 catch (Exception e)
@@ -706,6 +755,8 @@ namespace ZirisWorkshop
                 string dummy;
                 Notes.TryRemove(id, out dummy);
                 if (AddOnsDir == null || !Util.SafeId(id)) return;
+                // Switched on again while this was waiting its turn: keep it.
+                if (IsWanted(id)) { Raise(); return; }
                 string target = Path.Combine(AddOnsDir, id);
                 try
                 {
@@ -733,6 +784,14 @@ namespace ZirisWorkshop
             if (m.app == null || !Util.Newer(m.app.version, Util.AppVersion)) return;
             // Only the installed copy replaces itself (or a test copy reading a test folder).
             if (!(Opts.Source != null || (!Opts.Dev && Util.RunningInstalled))) return;
+            // We already updated to that version once and are still not it
+            // (the published file is wrong, or it did not start and the old
+            // copy was put back): don't go round in circles.
+            if (Settings.UpdateTried == m.app.version)
+            {
+                Util.Log("self-update to " + m.app.version + " was tried before; waiting for a newer version");
+                return;
+            }
             try
             {
                 SetStatus("Updating Ziri's Workshop to " + m.app.version + "...");
@@ -742,12 +801,24 @@ namespace ZirisWorkshop
                 string exe = Util.ExePath;
                 string old = exe + ".old";
                 if (File.Exists(old)) File.Delete(old);
+                try { if (File.Exists(exe + ".bad")) File.Delete(exe + ".bad"); } catch { }
+                lock (settingsLock) { Settings.UpdateTried = m.app.version; }
+                SaveSettings();
                 File.Move(exe, old);           // Windows lets a running program be renamed
                 try { File.WriteAllBytes(exe, data); }
                 catch { File.Move(old, exe); throw; }
                 string args = Opts.Passthrough() + (Opts.CheckOnce ? "" : " --tray")
                     + " --after-update " + Process.GetCurrentProcess().Id;
-                Process.Start(exe, args.Trim());
+                Process started;
+                try { started = Process.Start(exe, args.Trim()); }
+                catch { PutOldBack(exe); throw; }
+                // A new copy that dies at once (damaged, or it can't run here)
+                // must not leave the friend without a working app.
+                if (started != null && started.WaitForExit(4000) && started.ExitCode != 0)
+                {
+                    PutOldBack(exe);
+                    throw new Exception("the new version quit right away (exit code " + started.ExitCode + "); kept " + Util.AppVersion);
+                }
                 Util.Log("self-update " + Util.AppVersion + " -> " + m.app.version);
                 var h = ExitForUpdate;
                 if (h != null) h();
@@ -757,6 +828,16 @@ namespace ZirisWorkshop
                 Util.Log("self-update failed: " + e);
                 SetStatus("Last checked " + DateTime.Now.ToString("HH:mm") + ".");
             }
+        }
+
+        // The new copy is no good: set it aside as .bad and put the old one back.
+        public static void PutOldBack(string exe)
+        {
+            string old = exe + ".old", bad = exe + ".bad";
+            if (!File.Exists(old)) return;
+            try { if (File.Exists(bad)) File.Delete(bad); } catch { }
+            if (File.Exists(exe)) File.Move(exe, bad);
+            File.Move(old, exe);
         }
 
         public static void CleanupOld()
@@ -798,8 +879,11 @@ namespace ZirisWorkshop
             if (path.IndexOf("\\SavedVariables\\", StringComparison.OrdinalIgnoreCase) < 0) return;
             string id = Path.GetFileNameWithoutExtension(path);
             if (Find(id) == null) return;
-            if (saveTimer != null) saveTimer.Dispose();
-            saveTimer = new System.Threading.Timer(_ => Check("WoW saved " + id), null, 30000, Timeout.Infinite);
+            lock (timerLock)
+            {
+                if (saveTimer != null) saveTimer.Dispose();
+                saveTimer = new System.Threading.Timer(_ => Check("WoW saved " + id), null, 30000, Timeout.Infinite);
+            }
         }
 
         // ---------------- Start with Windows ----------------
@@ -1677,6 +1761,8 @@ namespace ZirisWorkshop
         readonly Dictionary<string, AddonCard> cards = new Dictionary<string, AddonCard>();
         readonly System.Windows.Forms.Timer every3h;
         readonly System.Windows.Forms.Timer firstCheck;
+        readonly System.Windows.Forms.Timer retry; // sooner than 3 hours after a check that could not reach GitHub
+        int retries;
         bool allowClose;
         bool busy;
         string pendingCheck;
@@ -1742,6 +1828,8 @@ namespace ZirisWorkshop
             firstCheck = new System.Windows.Forms.Timer { Interval = 1500 };
             firstCheck.Tick += (s, e) => { firstCheck.Stop(); RunCheck("start"); };
             firstCheck.Start();
+            retry = new System.Windows.Forms.Timer();
+            retry.Tick += (s, e) => { retry.Stop(); RunCheck("retry"); };
 
             FormClosing += (s, e) =>
             {
@@ -1817,14 +1905,16 @@ namespace ZirisWorkshop
                 {
                     f.ShowDialog(this);
                     bool folderChanged = f.ForeverPath != null && !string.Equals(f.ForeverPath, ws.Settings.ForeverPath, StringComparison.OrdinalIgnoreCase);
-                    if (folderChanged) ws.Settings.ForeverPath = f.ForeverPath;
-                    if (ws.Settings.StartWithWindows != f.StartSwitch.Checked)
+                    bool startChanged = ws.Settings.StartWithWindows != f.StartSwitch.Checked;
+                    string newPath = f.ForeverPath;
+                    bool newStart = f.StartSwitch.Checked;
+                    ws.ChangeSettings(st =>
                     {
-                        ws.Settings.StartWithWindows = f.StartSwitch.Checked;
-                        ws.ApplyStartWithWindows();
-                    }
-                    ws.Settings.SetupDone = true;
-                    ws.SaveSettings();
+                        if (folderChanged) st.ForeverPath = newPath;
+                        st.StartWithWindows = newStart;
+                        st.SetupDone = true;
+                    });
+                    if (startChanged) ws.ApplyStartWithWindows();
                     if (folderChanged)
                     {
                         ws.WatchSaves();
@@ -1910,6 +2000,16 @@ namespace ZirisWorkshop
                 Ui(() =>
                 {
                     busy = false;
+                    // No network yet (say, right after Windows started): try
+                    // again in 2, 5 and 15 minutes instead of 3 hours.
+                    retry.Stop();
+                    if (!ws.LastCheckFailed) retries = 0;
+                    else if (retries < 3)
+                    {
+                        retry.Interval = new[] { 2, 5, 15 }[retries] * 60 * 1000;
+                        retries++;
+                        retry.Start();
+                    }
                     TakeSnapshotIfAsked();
                     if (pendingCheck != null)
                     {
@@ -1999,8 +2099,7 @@ namespace ZirisWorkshop
             string name = a != null && a.name != null ? a.name : c.Id;
             if (!c.On)
             {
-                ws.Settings.Wanted[c.Id] = true;
-                ws.SaveSettings();
+                ws.SetWanted(c.Id, true);
                 RunWorker(() => ws.InstallOne(c.Id));
             }
             else
@@ -2012,8 +2111,7 @@ namespace ZirisWorkshop
                         Util.AppName, MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
                     if (answer != DialogResult.Yes) return;
                 }
-                ws.Settings.Wanted[c.Id] = false;
-                ws.SaveSettings();
+                ws.SetWanted(c.Id, false);
                 RunWorker(() => ws.RemoveOne(c.Id));
             }
             RefreshAll();
@@ -2068,8 +2166,7 @@ namespace ZirisWorkshop
             Hide();
             if (!ws.Settings.TrayHintShown)
             {
-                ws.Settings.TrayHintShown = true;
-                ws.SaveSettings();
+                ws.ChangeSettings(st => st.TrayHintShown = true);
                 tray.ShowBalloonTip(6000, Util.AppName, "Still running down here and keeping your addons up to date. Click the icon to open it again.", ToolTipIcon.Info);
             }
         }
@@ -2122,18 +2219,41 @@ namespace ZirisWorkshop
         static int Main(string[] args)
         {
             Opts.Parse(args);
-            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+            // No fixed TLS version: Windows picks (1.2 today, 1.3 where it has
+            // it), so the app keeps working when GitHub moves on.
 
+            try { return Run(args); }
+            catch (Exception e)
+            {
+                // The new version can't even start: put the previous one back
+                // and start it, so nobody is left without a working app.
+                Util.Log("start-up failed: " + e);
+                if (Opts.AfterUpdate > 0 && File.Exists(Util.ExePath + ".old"))
+                {
+                    try
+                    {
+                        Workshop.PutOldBack(Util.ExePath);
+                        Process.Start(Util.ExePath, (Opts.Passthrough() + (Opts.CheckOnce ? "" : " --tray")).Trim());
+                        Util.Log("put the previous version back");
+                    }
+                    catch (Exception e2) { Util.Log("could not put the previous version back: " + e2); }
+                }
+                return 1;
+            }
+        }
+
+        static int Run(string[] args)
+        {
             if (Opts.AfterUpdate > 0)
             {
                 try { Process.GetProcessById(Opts.AfterUpdate).WaitForExit(15000); } catch { }
             }
-            Workshop.CleanupOld();
             Util.Log("start " + Util.AppVersion + (args.Length > 0 ? " [" + string.Join(" ", args) + "]" : ""));
 
             if (Opts.CheckOnce)
             {
                 var ws = new Workshop();
+                Workshop.CleanupOld();
                 bool restarting = false;
                 ws.ExitForUpdate += () => restarting = true;
                 ws.Check("check-once");
@@ -2169,6 +2289,7 @@ namespace ZirisWorkshop
                 workshop.ApplyStartWithWindows();
                 var form = new MainForm(workshop);
                 var handle = form.Handle; // so background work can reach the window while hidden
+                Workshop.CleanupOld();    // we started fine: the previous version is no longer needed
 
                 var listener = new Thread(() =>
                 {
