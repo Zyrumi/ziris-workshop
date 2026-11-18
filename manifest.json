@@ -9,9 +9,9 @@
       "id": "ZirisToolkit",
       "name": "Ziri's Toolkit",
       "description": "Small helpers in one addon: Loot Highlight, Fresh Ranks, cleanse buttons, thanking people who buff you, an undress button, boat times, a tidier friends list, an instance limit counter, rested XP per character, buff reminders, a flight timer, threat for tanks and a page for console settings.",
-      "version": "1.8.0",
-      "url": "addons/ZirisToolkit-1.8.0.zip",
-      "sha256": "ce8f2649a2a556894cd7894ec1fcf169a2a23006b3869196f9ebb51753ade81f",
+      "version": "1.9.0",
+      "url": "addons/ZirisToolkit-1.9.0.zip",
+      "sha256": "04eb93d7f2f5e6b0cb09805642494de79f16b159d88cc54997de2370dd375ae8",
       "replaces": [
         "LootHighlight",
         "FreshRanks"
