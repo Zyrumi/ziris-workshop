@@ -9,9 +9,9 @@
       "id": "ZirisToolkit",
       "name": "Ziri's Toolkit",
       "description": "Small helpers in one addon: Loot Highlight, Fresh Ranks, cleanse buttons, thanking people who buff you, an undress button, boat times, a tidier friends list, an instance limit counter, rested XP per character, buff reminders, a flight timer, threat for tanks, a healer mana warning, a disconnect tracker and a page for console settings.",
-      "version": "1.10.3",
-      "url": "addons/ZirisToolkit-1.10.3.zip",
-      "sha256": "1f191db1e7274ca9b888c21819b2c6c1f066d1d646e836378ba779de45d9f415",
+      "version": "1.10.4",
+      "url": "addons/ZirisToolkit-1.10.4.zip",
+      "sha256": "b071a687d2022bee564c0bb074d8662303108113b1aeecdbc09cdc106963c8f3",
       "replaces": [
         "LootHighlight",
         "FreshRanks"
@@ -21,9 +21,9 @@
       "id": "FriendsCraft",
       "name": "FriendsCraft",
       "description": "Share professions, gold, recipes, bags and a shopping list with your friends.",
-      "version": "0.5.3",
-      "url": "addons/FriendsCraft-0.5.3.zip",
-      "sha256": "a62c7a8c91b78bb61ab735ddcc532b4aa11218cd169d502d73f9e6b044d8928b"
+      "version": "0.5.4",
+      "url": "addons/FriendsCraft-0.5.4.zip",
+      "sha256": "d7f4b7139c8215359bfbf8d9e4842e25fe175d79575fde44740a21e22982b712"
     }
   ]
 }
