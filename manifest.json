@@ -29,9 +29,9 @@
       "id": "ZyrumisLibram",
       "name": "Zyrumi's Libram",
       "description": "Paladin helper: blessing, aura and Righteous Fury reminders with one-key buffing, a Tank / DPS switch, threat for tanks, cleanse buttons, a healer mana warning and a class quest checklist.",
-      "version": "1.0.1",
-      "url": "addons/ZyrumisLibram-1.0.1.zip",
-      "sha256": "1c05a65f7c1d7c38a6343411d2c20ece3a9024cea21c0598510c36f86582b71e"
+      "version": "1.0.2",
+      "url": "addons/ZyrumisLibram-1.0.2.zip",
+      "sha256": "c6cbc1e52836ee5d9da7beda90924bd93291bd81a2b23bebeaded7dee7882df4"
     }
   ]
 }
