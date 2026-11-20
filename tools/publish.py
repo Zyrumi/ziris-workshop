@@ -13,6 +13,8 @@ who had one of the old ones; the app retires the old folders (Recycle Bin)
 and carries their saved settings over. Drop the old ones from addons.json.
 A changed addon needs a new ## Version in its .toc; an unchanged one keeps
 its old zip, so friends only download what really changed.
+An addon with a .pkgmeta file (the CurseForge packager's settings) leaves out
+the files and folders its "ignore:" list names, the same as on CurseForge.
 """
 import argparse
 import hashlib
@@ -44,12 +46,37 @@ def toc_value(toc, key):
     return None
 
 
+def pkgmeta_ignore(src):
+    """The paths a .pkgmeta "ignore:" list names (relative, forward slashes)."""
+    path = os.path.join(src, ".pkgmeta")
+    if not os.path.exists(path):
+        return set()
+    ignore, in_list = set(), False
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            text = line.split("#", 1)[0].rstrip()
+            if not text:
+                continue
+            if not text.startswith((" ", "\t", "-")):
+                in_list = text.strip() == "ignore:"
+                continue
+            m = re.match(r"\s*-\s*(.+)", text)
+            if in_list and m:
+                ignore.add(m.group(1).strip().strip("'\"").rstrip("/"))
+    return ignore
+
+
 def addon_files(src):
+    ignore = pkgmeta_ignore(src)
     files = []
     for base, dirs, names in os.walk(src):
-        dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+        rel_base = os.path.relpath(base, src).replace("\\", "/")
+        rel_base = "" if rel_base == "." else rel_base + "/"
+        dirs[:] = sorted(d for d in dirs if not d.startswith(".") and rel_base + d not in ignore)
         for n in sorted(names):
             if n in SKIP_NAMES or n.endswith(SKIP_SUFFIXES) or n.startswith("."):
+                continue
+            if rel_base + n in ignore:
                 continue
             files.append(os.path.join(base, n))
     return files
